@@ -57,6 +57,8 @@ async function setup(options = {}) {
   const menu = createOfficialMenu(document, options.menu);
   const bundle = loadBundle(BUNDLE, document, { reducedMotion: options.reducedMotion === true });
   const host = createFakeHost(options.host ?? {});
+  // 合并设置菜单里的快速选择列表要走官方 configForms；测试按需注入一个假表单。
+  if (options.configForms) host.ctx.configForms = options.configForms;
   bundle.plugin.apply(host.ctx);
   const entry = host.registered[0];
   if (!entry) throw new Error("插件没有注册任何插槽条目");
@@ -132,6 +134,80 @@ function officialRowText(row) {
 /** 真实 DOM 里"没设置过的内联样式"读作 ""，假 DOM 是 undefined；断言统一走这个。 */
 function cssValue(node, prop) {
   return node.style[prop] ?? "";
+}
+
+/* ── 合并设置菜单的测试动作（全部走用户能看到的东西：齿轮按钮 / 菜单节点） ── */
+
+/** 官方模型 popover 顶部那条设置入口里的齿轮按钮。 */
+function gearOf(ctx) {
+  const gear = ctx.menu.menu.querySelector('[data-ces-part="menu-gear"]');
+  if (gear === null) throw new Error("官方 popover 顶部没有设置齿轮（menu-gear）");
+  return gear;
+}
+
+/** 点击齿轮，等 React 落定，返回新的 body 级设置菜单。 */
+async function openSettings(ctx) {
+  gearOf(ctx).dispatch("click", { clientX: 640, clientY: 400, detail: 1 });
+  await settle();
+  return ctx.react.find("quick-panel");
+}
+
+/** Escape 关闭设置菜单（与用户按 Esc 一致）。 */
+async function closeSettings(ctx) {
+  ctx.document.dispatch("keydown", { key: "Escape" });
+  await settle();
+}
+
+/** 某个动画设置项里当前被选中的单选项值。 */
+function checkedRadioValues(field) {
+  if (field === null) return [];
+  return field
+    .querySelectorAll('[data-ces-part="anim-option"]')
+    .filter((input) => input.getAttribute("checked") !== null)
+    .map((input) => input.getAttribute("value"));
+}
+
+/** 按 data-key 找动画设置项。 */
+function animFieldOf(ctx, key) {
+  return ctx.react.findAll("anim-field").find((field) => field.getAttribute("data-key") === key) ?? null;
+}
+
+/** 收集一棵假 DOM 里的所有可见字符串（文本 + 属性值），用来断言"没有中文漏网"。 */
+function allStrings(node) {
+  const out = [];
+  const walk = (item) => {
+    if (item === null || item === undefined) return;
+    if (item._text !== undefined) out.push(item._text);
+    if (item.attributes) for (const value of item.attributes.values()) out.push(value);
+    for (const child of item.children ?? []) walk(child);
+  };
+  walk(node);
+  return out.join(" ");
+}
+
+/** 官方 configForms 的假表单：保存 quickModels，并像真实现一样通知订阅者。 */
+function createQuickForm(list) {
+  let snapshot = { status: "ready", value: { quickModels: list }, revision: 1, writable: true };
+  const sets = [];
+  const listeners = new Set();
+  return {
+    sets,
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    async set(field, value) {
+      sets.push([field, value]);
+      snapshot = {
+        ...snapshot,
+        value: { ...snapshot.value, [field]: value },
+        revision: snapshot.revision + 1,
+      };
+      for (const listener of [...listeners]) listener();
+      return true;
+    },
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1156,7 +1232,7 @@ section("18. 连续运动引擎：接线层（按下/拖动/松手/键盘只改�
   }
 }
 
-section("19. 两种动画模式：简洁 / 完整，且都不受系统「减少动态效果」影响");
+section("19. 三种动画模式的设置 schema：文案走字典，参数组正确，且都不受系统「减少动态效果」影响");
 {
   const pctOf = (c) => {
     const m = /\+ ([\d.]+) \*/.exec(c.react.find("knob").style.left || "");
@@ -1173,19 +1249,26 @@ section("19. 两种动画模式：简洁 / 完整，且都不受系统「减少�
   const ctx = await setup();
   const I = ctx.internals;
 
-  // ① 设置只剩两项（灵敏度/力度已按要求删除）
+  // ① 设置只剩两项（灵敏度/力度已按要求删除），且 schema 里只放键名、不放死文案
   eq(I.SETTINGS_SCHEMA.length, 2, "[19] 设置只有两项（动画 + 刻度点）");
   eq(I.SETTINGS_SCHEMA.map((it) => it.key).join(","), "motion,reachedTicks", "[19] 键名正确，力度已删除");
   eq(I.readSettings().motion, "full", "[19] 动画默认 = 完整动画");
   ok(I.SETTINGS_SCHEMA.every((it) => it.default !== undefined), "[19] 每项都显式声明 default");
-  eq(I.SETTINGS_SCHEMA[0].options.map((o) => o.label).join("/"), "快速动画/简洁动画/完整动画", "[19] 选项文案与顺序（由上到下：快速 / 简洁 / 完整）");
-  eq(I.SETTINGS_SCHEMA[0].group, "动画效果", "[19] 分组标题 = 动画效果（灰色那一行）");
+  eq(I.SETTINGS_SCHEMA.map((it) => it.labelKey).join(","), "anim.motion,anim.ticks", "[19] 标题走翻译键（不写死中文）");
+  eq(I.SETTINGS_SCHEMA[0].options.map((o) => o.value).join("/"), "fast/quick/full", "[19] 动画选项顺序（由上到下：快速 / 简洁 / 完整）");
+  eq(I.SETTINGS_SCHEMA[0].options.map((o) => o.textKey).join("/"), "anim.motion.fast/anim.motion.quick/anim.motion.full", "[19] 选项文案也走翻译键");
+  eq(I.QUICK_TEXT.zh[I.SETTINGS_SCHEMA[0].labelKey], "动画效果", "[19] 中文标题 = 动画效果");
+  eq(I.QUICK_TEXT.en[I.SETTINGS_SCHEMA[0].labelKey], "Animation mode", "[19] 英文标题 = Animation mode");
+  ok(I.SETTINGS_SCHEMA.every((it) => it.label === undefined && it.group === undefined), "[19] schema 里没有遗留的硬编码文案字段");
 
-  // ② 两种模式的参数组
+  // ② 三种模式的参数组
   ok(I.motionParamsForMode() === I.MOTION, "[19] 完整动画 → MOTION（他的方案）");
   I.writeSettings({ motion: "quick" });
   ok(I.motionParamsForMode() === I.MOTION_REDUCED, "[19] 简洁动画 → MOTION_REDUCED（我们之前的方案）");
   ok(I.MOTION_REDUCED.K > I.MOTION.K && I.MOTION_REDUCED.vmax > I.MOTION.vmax, "[19] 简洁参数更紧");
+  I.writeSettings({ motion: "fast" });
+  ok(I.motionParamsForMode() === I.MOTION_FAST, "[19] 快速动画 → MOTION_FAST（Codex 手感）");
+  I.writeSettings({ motion: "full" });
 
   // ③ 灵敏度写死为"他原来的一半"
   ok(I.RELEASE_PROJECT_S === 0, "[19] 灵敏度 = 0（非零外推会把落点推到另一档 → 抽搐）");
@@ -1706,18 +1789,29 @@ section("52. 三组动画参数都必须稳定（不许 bang-bang 自激振荡�
 }
 
 
-section("53. 官方菜单里只有一条滑条，Model 那一行之上不再有横幅");
+section("53. 官方菜单顶部是设置入口条，Model 行紧随其后；滑条照旧只有一条");
 {
   const ctx = await setup();
-  const { menu, react } = ctx;
+  const { menu, react, internals } = ctx;
 
-  // Model 那一行之上不许再有任何东西（用户明确否掉了横幅）
-  ok(menu.menu.children.indexOf(menu.modelRow) === 0, "[53] Model 那一行仍然是 popover 的第一个子节点");
-  eq(react.find("header"), null, "[53] 没有横幅内容");
+  // 第一条是设置入口条（DOM 桥插在官方 React 树之外），Model 行被挤到第二个子节点。
+  const head = menu.menu.firstChild;
+  eq(head && head.getAttribute("data-ces-part"), "menu-head", "[53] popover 的第一个子节点是设置入口条");
+  eq(head.parentNode, menu.menu, "[53] 入口条就在官方 popover 里");
+  eq(menu.menu.children[1], menu.modelRow, "[53] Model 那一行紧随其后（官方内容没被挪走）");
+  eq(head.children.length, 1, "[53] 入口条里恰好只有一个按钮");
+  const gear = head.children[0];
+  eq(gear.getAttribute("data-ces-part"), "menu-gear", "[53] 那一个按钮就是设置图标");
+  eq(gear.tagName, "BUTTON", "[53] 设置图标是按钮（键盘/读屏可达）");
+  eq(gear.getAttribute("aria-label"), internals.QUICK_TEXT.en["gear.label"], "[53] aria-label 来自插件字典（无 locale 时为英文）");
+  eq(gear.getAttribute("title"), internals.QUICK_TEXT.en["gear.label"], "[53] title 同一份字典");
+
+  // 入口条不是旧横幅：React 树里没有 header/档位词，官方两行原样保留。
+  eq(react.find("header"), null, "[53] 没有旧的横幅内容");
   eq(react.findAll("header-track").length, 0, "[53] 没有第二条轨道");
   eq(react.findAll("header-label").length, 0, "[53] 没有横幅档位词");
 
-  // 但那一条推理等级滑条照旧在，而且只有一条
+  // 推理等级滑条照旧在，而且只有一条。
   const sliderPortals = react.portalHosts.filter((node) => node.getAttribute && node.getAttribute("data-ces-part") === "host");
   eq(sliderPortals.length, 1, "[53] 推理等级那一行里只有一条滑条");
   eq(react.findAll("track").length, 1, "[53] 整个 popover 只有一条轨道");
@@ -1747,6 +1841,225 @@ section("54. 同一行只许有一条滑条（前任包/重复加载都不能多
   ok(menu.effortRow.children.indexOf(stale) < 0, "[54] 别份留下的容器被摘掉");
   eq(bundle.react.findAll("tick").length, 4, "[54] 只剩一套刻度（没有两条滑条叠着）");
   eq(bundle.react.findAll("knob").length, 1, "[54] 只剩一个旋钮");
+}
+
+section("55. 设置入口（齿轮）→ 合并菜单（快速选择 / 动画子菜单），以及落点纯函数");
+{
+  /* ── A. 入口：齿轮是 popover 顶栏里唯一的按钮；右键一律不再打开设置菜单 ── */
+  const ctx = await setup();
+  const I = ctx.internals;
+  const { menu, document, react } = ctx;
+  const gap = I.SETTINGS_MENU_GAP_PX;
+  const margin = I.SEAT_BAR_MARGIN_PX;
+  const minHeight = I.SETTINGS_MENU_MIN_HEIGHT_PX;
+  ok(typeof gap === "number" && gap > 0, "[55] __internals.SETTINGS_MENU_GAP_PX 可用（落点断言用它）");
+  ok(typeof margin === "number" && margin > 0, "[55] __internals.SEAT_BAR_MARGIN_PX 可用");
+  ok(typeof minHeight === "number" && minHeight > 0, "[55] __internals.SETTINGS_MENU_MIN_HEIGHT_PX 可用");
+
+  const gear = gearOf(ctx);
+  eq(gear.getAttribute("data-ces-part"), "menu-gear", "[55] 顶栏按钮就是设置齿轮");
+  eq(gear.getAttribute("aria-label"), I.QUICK_TEXT.en["gear.label"], "[55] 齿轮 aria-label 来自插件字典");
+  eq(gear.getAttribute("title"), I.QUICK_TEXT.en["gear.label"], "[55] 齿轮 title 同一份字典");
+
+  // 旧右键入口彻底移除：没有 document 级处理器，席和滑条右键都不弹菜单。
+  eq(document.documentElement.listeners.has("contextmenu"), false, "[55] 插件没有安装 document 级 contextmenu 处理器");
+  eq(menu.seat.listeners.has("contextmenu"), false, "[55] 模型席上没有 contextmenu 处理器");
+  menu.seat.dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
+  await settle();
+  eq(react.findAll("quick-panel").length, 0, "[55] 右键模型席不再打开设置菜单");
+  const trackNode = react.find("track");
+  trackNode.dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
+  await settle();
+  eq(react.findAll("quick-panel").length, 0, "[55] 右键推理等级滑条不再打开设置菜单");
+  document.dispatch("contextmenu", { target: menu.menu });
+  await settle();
+  eq(react.findAll("quick-panel").length, 0, "[55] 文档级右键派发也不打开设置菜单");
+  eq(document.documentElement.listeners.has("contextmenu"), false, "[55] 右键之后仍然没有装 contextmenu 处理器");
+
+  /* ── B. 点击齿轮打开唯一一个 body 级菜单，根面板同时包含两项设置 ── */
+  let panel = await openSettings(ctx);
+  ok(panel !== null, "[55] 点击齿轮打开设置菜单");
+  eq(react.findAll("quick-panel").length, 1, "[55] 只打开一个设置菜单");
+  eq(panel.getAttribute("data-pane"), "root", "[55] 打开的是根面板（快速选择）");
+  eq(panel.getAttribute("role"), "dialog", "[55] 菜单是 dialog");
+  eq(panel.getAttribute("aria-label"), I.QUICK_TEXT.en["panel.label"], "[55] 菜单 aria-label 来自字典");
+  eq(document.body.querySelectorAll('[data-ces-part="quick-panel"]').length, 1, "[55] body 下只有这一份设置菜单");
+  ok(document.body.contains(panel), "[55] 菜单挂在 body 级");
+  eq(menu.menu.contains(panel), false, "[55] 菜单不在官方 popover 里");
+  eq(menu.composer.contains(panel), false, "[55] 菜单不在 composer 里");
+  ok(panel.parentNode === document.body || (panel.parentNode && panel.parentNode.parentNode === document.body),
+    "[55] 菜单由 body 级 portal 宿主挂载（不在官方 popover / composer 里）");
+
+  const optionNodes = react.findAll("quick-option");
+  eq(optionNodes.length, 1, "[55] 根面板列出目录里的全部模型（默认目录 1 个）");
+  const optionInput = optionNodes[0].querySelector('[data-ces-part="quick-option-input"]');
+  eq(optionInput.getAttribute("type"), "checkbox", "[55] 全部模型是复选框列表");
+  eq(optionInput.getAttribute("checked"), null, "[55] 未选中的模型复选框是空的");
+  const animEntry = react.find("quick-anim-entry");
+  eq(animEntry.tagName, "BUTTON", "[55] 根面板有进入动画子菜单的按钮");
+  ok(animEntry.textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) >= 0, "[55] 子菜单入口文案来自字典");
+
+  /* ── C. 动画子菜单：schema 驱动的 anim-field / anim-option，可写回、可返回、可重置 ── */
+  animEntry.fire("onClick", {});
+  await settle();
+  panel = react.find("quick-panel");
+  eq(panel.getAttribute("data-pane"), "anim", "[55] 进入动画子菜单");
+  eq(react.findAll("quick-option").length, 0, "[55] 子菜单里不再显示快速选择根面板");
+
+  const fields = react.findAll("anim-field");
+  eq(fields.length, I.SETTINGS_SCHEMA.length, "[55] 每个 SETTINGS_SCHEMA 条目一个 anim-field");
+  eq(fields.map((field) => field.getAttribute("data-key")).join(","), I.SETTINGS_SCHEMA.map((item) => item.key).join(","),
+    "[55] anim-field 的 data-key 与 schema 顺序一致");
+  for (const schemaItem of I.SETTINGS_SCHEMA) {
+    const field = animFieldOf(ctx, schemaItem.key);
+    ok(field !== null, `[55] ${schemaItem.key} 有 anim-field`);
+    if (field === null) continue;
+    const radios = field.querySelectorAll('[data-ces-part="anim-option"]');
+    eq(radios.length, schemaItem.options.length, `[55] ${schemaItem.key} 的选项数 = schema`);
+    eq(radios.map((radio) => radio.getAttribute("type")).join(","), schemaItem.options.map(() => "radio").join(","),
+      `[55] ${schemaItem.key} 的控件都是 radio`);
+    eq(radios.map((radio) => radio.getAttribute("value")).join(","), schemaItem.options.map((option) => option.value).join(","),
+      `[55] ${schemaItem.key} 的取值与 schema 一致`);
+    eq(checkedRadioValues(field).join(","), String(I.readSettings()[schemaItem.key]),
+      `[55] ${schemaItem.key} 回填当前设置`);
+  }
+
+  const motionField = animFieldOf(ctx, "motion");
+  const quickRadio = motionField.querySelectorAll('[data-ces-part="anim-option"]').find((radio) => radio.getAttribute("value") === "quick");
+  quickRadio.fire("onChange", {});
+  await settle();
+  eq(I.readSettings().motion, "quick", "[55] 改动画单选项写进插件设置存储");
+  eq(checkedRadioValues(animFieldOf(ctx, "motion")).join(","), "quick", "[55] 菜单按新值重新回填（动画）");
+
+  const ticksField = animFieldOf(ctx, "reachedTicks");
+  const highlightRadio = ticksField.querySelectorAll('[data-ces-part="anim-option"]').find((radio) => radio.getAttribute("value") === "highlight");
+  highlightRadio.fire("onChange", {});
+  await settle();
+  eq(I.readSettings().reachedTicks, "highlight", "[55] 改刻度点单选项写进插件设置存储");
+  eq(checkedRadioValues(animFieldOf(ctx, "reachedTicks")).join(","), "highlight", "[55] 菜单按新值重新回填（刻度点）");
+  eq(I.SETTINGS_KEY, "dsh-model-quick-selector.settings", "[55] 存储键仍然是原来的键");
+
+  react.find("anim-reset").fire("onClick", {});
+  await settle();
+  const defaults = I.schemaDefaults();
+  const afterReset = I.readSettings();
+  eq(afterReset.motion, defaults.motion, "[55] 恢复默认：动画回到 schema 默认");
+  eq(afterReset.reachedTicks, defaults.reachedTicks, "[55] 恢复默认：刻度点回到 schema 默认");
+  eq(afterReset.v, I.SETTINGS_VERSION, "[55] 恢复默认后仍带当前设置版本");
+  eq(checkedRadioValues(animFieldOf(ctx, "motion")).join(","), "full", "[55] 恢复默认后动画单选项回填 full");
+  eq(checkedRadioValues(animFieldOf(ctx, "reachedTicks")).join(","), "hidden", "[55] 恢复默认后刻度点单选项回填 hidden");
+
+  react.find("anim-back").fire("onClick", {});
+  await settle();
+  panel = react.find("quick-panel");
+  eq(panel.getAttribute("data-pane"), "root", "[55] 返回按钮回到了快速选择根面板");
+  eq(react.findAll("anim-field").length, 0, "[55] 返回后动画控件全部消失");
+  ok(react.find("quick-anim-entry") !== null, "[55] 根面板的动画入口还在");
+  eq(react.findAll("quick-option").length, 1, "[55] 根面板的模型列表还在");
+
+  /* ── D. 根面板里既有已选列表（chip），也有动画入口 ── */
+  const form = createQuickForm([{ provider: "deepseek", model: "deepseek-v41-flash" }]);
+  const listed = await setup({ configForms: { get: () => form } });
+  const listedPanel = await openSettings(listed);
+  ok(listedPanel !== null, "[55] 注入 configForms 后齿轮仍然打开菜单");
+  const listedOption = listed.react.findAll("quick-option").find((node) => node.getAttribute("data-model") === "deepseek-v41-flash");
+  eq(listedOption.querySelector('[data-ces-part="quick-option-input"]').getAttribute("checked"), "",
+    "[55] 已在已选列表里的模型复选框是勾选的");
+  const chips = listed.react.findAll("quick-chip");
+  eq(chips.length, 1, "[55] 已选模型显示为一个 chip");
+  eq(chips[0].getAttribute("data-model"), "deepseek-v41-flash", "[55] chip 带模型 id");
+  ok(chips[0].textContent.indexOf("DeepSeek-V41-Flash") >= 0, "[55] chip 显示模型名");
+  eq(chips[0].getAttribute("title"), listed.internals.QUICK_TEXT.en["chip.drag"], "[55] chip 的 title 来自字典");
+  eq(listed.react.find("quick-chip-remove").getAttribute("aria-label"), "Remove DeepSeek-V41-Flash",
+    "[55] chip 的移除按钮 aria-label 来自字典");
+  ok(listed.react.find("quick-anim-entry") !== null, "[55] 同一根面板里同时有已选列表和动画入口");
+
+  /* ── E. 落点纯函数：右/左、顶端夹取、最大高度、退化 anchor、小视口边界（BVA） ── */
+  const placement = I.settingsMenuPlacement;
+  const viewport = { width: 1280, height: 800 };
+  const panelWidth = I.QUICK_PANEL_WIDTH_PX;
+  const anchor = { left: 100, top: 100, right: 260, bottom: 400, width: 160, height: 300 };
+  const normal = placement(anchor, viewport, panelWidth);
+  ok(normal !== null, "[55] 正常 popover 得到落点");
+  eq(Object.keys(normal).sort().join(","), "left,maxHeight,top", "[55] 落点形状是 { left, top, maxHeight }");
+  eq(normal.left, anchor.right + gap, "[55] 右侧放得下 → 菜单左缘 = popover 右缘 + gap");
+  eq(normal.top, anchor.top, "[55] top 与 popover 顶端对齐");
+  eq(normal.maxHeight, viewport.height - normal.top - margin, "[55] maxHeight = 顶端到底部边距剩余的空间");
+
+  // 恰好放得下 / 差 1px：边界就在「视口宽 - 边距 - 菜单宽 - gap」。
+  const exactRight = viewport.width - margin - panelWidth - gap;
+  const exact = placement({ left: 500, top: 100, right: exactRight, bottom: 400 }, viewport, panelWidth);
+  eq(exact.left, exactRight + gap, "[55] 恰好放得下（贴右边距）→ 仍放右侧");
+  const oneShort = placement({ left: 500, top: 100, right: exactRight + 1, bottom: 400 }, viewport, panelWidth);
+  eq(oneShort.left, 500 - gap - panelWidth, "[55] 差 1px → 翻到 popover 左侧");
+  eq(oneShort.left + panelWidth, 500 - gap, "[55] 左侧落点同样保持 gap");
+
+  // 视口左上角：不出屏，同时仍贴 popover 右侧。
+  const topLeft = placement({ left: 0, top: 0, right: 200, bottom: 30 }, viewport, panelWidth);
+  ok(topLeft !== null, "[55] 视口左上角也得到落点");
+  eq(topLeft.left, 200 + gap, "[55] 左上角：菜单仍贴 popover 右侧");
+  eq(topLeft.top, margin, "[55] 左上角：top 被夹到视口边距内");
+  eq(topLeft.maxHeight, viewport.height - topLeft.top - margin, "[55] 左上角：maxHeight 仍按剩余空间算");
+
+  // 视口右下角：翻到左侧，并把顶端压到还能留出最小可用高度。
+  const bottomRight = placement({ left: 1080, top: 770, right: 1280, bottom: 800 }, viewport, panelWidth);
+  ok(bottomRight !== null, "[55] 视口右下角也得到落点");
+  eq(bottomRight.left, 1080 - gap - panelWidth, "[55] 右下角：右侧放不下 → 翻到 popover 左侧");
+  eq(bottomRight.top, viewport.height - minHeight - margin, "[55] 右下角：top 下压到仍留得出最小高度");
+  eq(bottomRight.maxHeight, viewport.height - bottomRight.top - margin, "[55] 右下角：maxHeight 正好是剩余空间");
+  eq(bottomRight.maxHeight, minHeight, "[55] 右下角：剩余的正好是最小可用高度");
+  ok(bottomRight.top + bottomRight.maxHeight <= viewport.height, "[55] 右下角落点不出视口");
+
+  // 退化 anchor：必须 null，而不是被夹到 (margin, margin)。
+  eq(placement({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }, viewport, panelWidth), null,
+    "[55] 全 0 anchor → null（不会钉在左上角）");
+  eq(placement({ left: NaN, top: 0, right: 200, bottom: 30 }, viewport, panelWidth), null,
+    "[55] NaN left → null");
+  eq(placement({ left: 0, top: NaN, right: 200, bottom: 30 }, viewport, panelWidth), null,
+    "[55] NaN top → null");
+  eq(placement({ left: 0, top: 0, right: NaN, bottom: 30 }, viewport, panelWidth), null,
+    "[55] NaN right → null");
+  eq(placement({ left: 0, top: 0, right: 200, bottom: NaN }, viewport, panelWidth), null,
+    "[55] NaN bottom → null");
+  eq(placement({ left: 100, top: 100, right: 100, bottom: 100 }, viewport, panelWidth), null,
+    "[55] 零面积 anchor → null");
+  eq(placement(anchor, viewport, 0), null, "[55] 菜单宽为 0 → null");
+
+  // 小视口：320×240 仍放得下 160px 的最小高度；边界是「顶端 + 底边距 + 最小高度」。
+  const tiny = placement({ left: 10, top: 10, right: 200, bottom: 30 }, { width: 320, height: 240 }, panelWidth);
+  ok(tiny !== null, "[55] 320×240 小视口仍能放下最小高度");
+  eq(tiny.top, 10, "[55] 小视口：顶端仍与 popover 对齐");
+  eq(tiny.maxHeight, 240 - tiny.top - margin, "[55] 小视口：maxHeight = 剩余空间（不被最小高度顶出视口）");
+  ok(tiny.top + tiny.maxHeight <= 240, "[55] 小视口：菜单不出视口");
+
+  const boundaryTop = margin;
+  const boundaryHeight = boundaryTop + margin + minHeight;
+  const fitsTiny = placement({ left: 10, top: 0, right: 200, bottom: 30 }, { width: 320, height: boundaryHeight }, panelWidth);
+  ok(fitsTiny !== null, "[55] 剩余空间恰好 = 最小高度 → 仍返回落点");
+  eq(fitsTiny.maxHeight, minHeight, "[55] 边界上 maxHeight = 最小高度");
+  eq(placement({ left: 10, top: 0, right: 200, bottom: 30 }, { width: 320, height: boundaryHeight - 1 }, panelWidth), null,
+    "[55] 剩余空间比最小高度少 1px → null");
+
+  /* ── F. 打开菜单时真的采用落点；无效锚点 + 无指针坐标时宁可不弹 ── */
+  const placed = await setup();
+  placed.menu.menu.rect = { left: 320, top: 120, right: 520, bottom: 420, width: 200, height: 300 };
+  const expected = placed.internals.settingsMenuPlacement(
+    placed.menu.menu.rect,
+    { width: 1280, height: 800 },
+    placed.internals.QUICK_PANEL_WIDTH_PX,
+  );
+  const placedPanel = await openSettings(placed);
+  ok(placedPanel !== null, "[55] 有面积的 popover 能打开菜单");
+  eq(placedPanel.style.left, expected.left + "px", "[55] 实际 left = 纯函数算出的 left");
+  eq(placedPanel.style.top, expected.top + "px", "[55] 实际 top = 纯函数算出的 top");
+  eq(placedPanel.style.maxHeight, expected.maxHeight + "px", "[55] 实际 maxHeight = 纯函数算出的 maxHeight");
+  ok(parseFloat(placedPanel.style.left) > placed.menu.menu.rect.right, "[55] 菜单实际出现在 popover 右侧");
+
+  const stale = await setup();
+  stale.menu.menu.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  gearOf(stale).dispatch("click", { detail: 0 }); // 键盘触发：没有指针坐标可以兜底
+  await settle();
+  eq(stale.react.findAll("quick-panel").length, 0, "[55] 无效锚点且无指针坐标 → 宁可不弹，也不出现在左上角");
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

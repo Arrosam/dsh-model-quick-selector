@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-quick-selector",
   "version": "2.3.0",
-  "description": "Quick-select model list for the DSH model selector: right-click to choose and order models, drag vertically to switch between them",
+  "description": "Quick-select model list for the DSH model selector: choose and order models from the model menu settings icon, drag vertically to switch between them",
   "license": "MIT",
   "keywords": [
     "dsh",

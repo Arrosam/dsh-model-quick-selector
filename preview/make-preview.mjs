@@ -298,7 +298,7 @@ row.style.paddingTop = ROW_PADDING_BLOCK;
 row.style.paddingBottom = ROW_PADDING_BLOCK;
 
 var host = document.createElement("div");
-host.className = "ces-inline";
+host.className = "mqs-slider";
 host.setAttribute("data-energy", "0");
 row.appendChild(host);
 
