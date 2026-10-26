@@ -71,6 +71,21 @@ class FakeNode {
     return child;
   }
 
+  /** 官方菜单是第一个子节点处插横幅用的（insertBefore 与 DOM 同义）。 */
+  insertBefore(child, reference) {
+    if (child.parentNode) child.parentNode.removeChild(child);
+    child.parentNode = this;
+    const index = reference ? this.children.indexOf(reference) : -1;
+    if (index >= 0) this.children.splice(index, 0, child);
+    else this.children.push(child);
+    return child;
+  }
+
+  /** 真实 DOM 的 firstChild（可能为 null）；插横幅时当成 insertBefore 的参照节点。 */
+  get firstChild() {
+    return this.children.length > 0 ? this.children[0] : null;
+  }
+
   removeChild(child) {
     const index = this.children.indexOf(child);
     if (index >= 0) this.children.splice(index, 1);
@@ -597,6 +612,56 @@ export function snapshotFor(model = DEFAULT_MODEL, reasoningEffort = undefined) 
 }
 
 /**
+ * 官方的 locale 服务替身。
+ *
+ * 契约（与 dsh-client-locale 一致，只保留测试需要的部分）：
+ *   · `register(ns, { zh, en })` 一次登记整套字典（重复登记同一格会抛错 —— 真实现如此，
+ *     插件据此判断"命名空间已被另一份实例占用"）；
+ *   · `bind(ns)` 返回一个**每次调用都按当下语言查表**的 t（所以组件捕获它不会过期）；
+ *   · `setLocale(id)` 只切换语言并通知订阅者（真实实现会写 Host 设置，这里只要可观察）。
+ *
+ * @param initial 初始语言（默认 en）
+ */
+export function createFakeLocale(initial = "en") {
+  const dicts = new Map();
+  const registrations = [];
+  const listeners = new Set();
+  let active = initial;
+  const lookup = (ns, key) => {
+    const perLocale = dicts.get(ns);
+    if (!perLocale) return undefined;
+    const table = perLocale[active] ?? perLocale.en;
+    return table ? table[key] : undefined;
+  };
+  return {
+    registrations,
+    get active() { return active; },
+    setLocale(id) {
+      active = id;
+      for (const listener of [...listeners]) listener();
+    },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    register(ns, locales) {
+      const perLocale = dicts.get(ns) ?? {};
+      for (const locale of Object.keys(locales)) {
+        if (perLocale[locale]) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`);
+      }
+      Object.assign(perLocale, locales);
+      dicts.set(ns, perLocale);
+      registrations.push({ ns, dicts: locales });
+      return () => {};
+    },
+    bind(ns) {
+      return (key, params) => {
+        const template = lookup(ns, key) ?? key;
+        if (!params) return template;
+        return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match));
+      };
+    },
+  };
+}
+
+/**
  * 官方形状的假宿主。
  *
  * @param options.model            目录里的模型（含 reasoning.efforts）
@@ -604,6 +669,7 @@ export function snapshotFor(model = DEFAULT_MODEL, reasoningEffort = undefined) 
  * @param options.failDirectoryFor 前 N 次 directoryFor 抛错（复现"会话作用域还没就绪"）
  * @param options.subagent         sessions.subagentAddress 是否返回地址（子代理会话）
  * @param options.select           select 的替身：返回 {ok}／抛错／返回 Promise
+ * @param options.locale           官方语言服务替身（createFakeLocale()）；不传 = 组合里没有 locale
  */
 export function createFakeHost(options = {}) {
   const model = options.model ?? DEFAULT_MODEL;
@@ -637,11 +703,18 @@ export function createFakeHost(options = {}) {
 
   const registered = [];
   const subscriptions = [];
+  /** cordis 的 effect：语言字典这类"随 fiber 卸载回收"的注册走它；测试只记录 disposer。 */
+  const effects = [];
   const ctx = {
     /** 监视宿主事件订阅：本插件应当**一次都不订阅**（这是"不注入消息"的结构性证据）。 */
     on: (name, ...rest) => {
       subscriptions.push({ name, rest });
       return () => {};
+    },
+    effect: (fn) => {
+      const disposer = typeof fn === "function" ? fn() : undefined;
+      effects.push(disposer);
+      return disposer;
     },
     modelDirectories: {
       directoryFor: () => {
@@ -663,6 +736,9 @@ export function createFakeHost(options = {}) {
     },
   };
 
+  // 官方语言服务（不传 = 极简组合：插件跳过注册、退到同一份字典的英文表）
+  if (options.locale) ctx.locale = options.locale;
+
   return {
     ctx,
     store,
@@ -671,6 +747,7 @@ export function createFakeHost(options = {}) {
     loads,
     registered,
     subscriptions,
+    effects,
     get directoryForCalls() { return directoryForCalls; },
   };
 }

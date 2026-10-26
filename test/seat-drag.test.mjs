@@ -1,5 +1,5 @@
 /**
- * dsh-codex-effort-slider — black-box tests: drag-to-switch-effort on the Model selection widget
+ * dsh-model-quick-selector — black-box tests: drag-to-switch-effort on the Model selection widget
  * (the official collapsed model trigger, the "seat").
  *
  * Run: `node test/seat-drag.test.mjs` — exit code 0 when every assertion passes, 1 otherwise.

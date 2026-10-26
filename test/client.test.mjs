@@ -1,5 +1,5 @@
 /**
- * dsh-codex-effort-slider — 客户端离线测试
+ * dsh-model-quick-selector — 客户端离线测试
  *
  * 跑法：`node test/client.test.mjs`
  *
@@ -12,7 +12,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createDocument, createFakeHost, createOfficialMenu, loadBundle, settle, wait } from "./harness.mjs";
+import { createDocument, createFakeHost, createOfficialMenu, loadBundle, settle, wait, snapshotFor } from "./harness.mjs";
 
 const BUNDLE = fileURLToPath(new URL("../lib/client.js", import.meta.url));
 const SOURCE = readFileSync(BUNDLE, "utf8");
@@ -139,16 +139,16 @@ function cssValue(node, prop) {
 section("1. 接线与产物");
 {
   const { registration, plugin, entry, document, host, internals } = await setup();
-  eq(registration.id, "dsh-codex-effort-slider", "[1] bundle 注册 id 正确");
+  eq(registration.id, "dsh-model-quick-selector", "[1] bundle 注册 id 正确");
   ok(Array.isArray(plugin.inject) && plugin.inject.indexOf("slots") >= 0, "[1] inject 含 slots");
   ok(plugin.inject.indexOf("modelDirectories") >= 0, "[1] inject 含 modelDirectories（读写官方档位靠它）");
   ok(plugin.inject.indexOf("sessions") >= 0, "[1] inject 含 sessions（判子代理会话靠它）");
   eq(entry.opts.name, "conversation.input.right", "[1] 仍然注册插槽条目（不可见锚点：拿 sessionId + ctx 的立足点）");
-  eq(entry.opts.id, "codex-effort-slider", "[1] 条目 id 是自己的");
-  const styles = document.querySelectorAll('style[data-plugin-css="dsh-codex-effort-slider"]');
+  eq(entry.opts.id, "model-quick-selector-anchor", "[1] 条目 id 是自己的");
+  const styles = document.querySelectorAll('style[data-plugin-css="dsh-model-quick-selector"]');
   eq(styles.length, 1, "[1] 样式挂载一次");
   internals.installStyles();
-  eq(document.querySelectorAll('style[data-plugin-css="dsh-codex-effort-slider"]').length, 1, "[1] 重复安装样式是幂等的");
+  eq(document.querySelectorAll('style[data-plugin-css="dsh-model-quick-selector"]').length, 1, "[1] 重复安装样式是幂等的");
   eq(host.subscriptions.length, 0, "[1] apply 期间没有订阅任何宿主事件");
   ok(internals.CSS.indexOf(".ces-track") > 0, "[1] 样式里有轨道规则");
 }
@@ -169,8 +169,9 @@ section("2. 只动那一行：加高、折行、不碰官方原有内容");
   const host_ = react.find("host");
   ok(host_ !== null, "[2] 滑条容器被 append 进那一行");
   eq(host_.parentNode, row, "[2] 容器的父节点就是官方那一行");
-  eq(react.portalHosts.length, 1, "[2] 只有一次 portal（没有重复注入）");
-  eq(react.portalHosts[0], host_, "[2] portal 的目标就是那个容器");
+  const sliderPortals = react.portalHosts.filter((node) => node.getAttribute && node.getAttribute("data-ces-part") === "host");
+  eq(sliderPortals.length, 1, "[2] 只有一条滑条被注入（没有重复注入）");
+  eq(sliderPortals[0], host_, "[2] 滑条 portal 的目标就是那个容器");
 
   const track_ = react.find("track");
   eq(track_.getAttribute("role"), "slider", "[2] 滑条有 role=slider");
@@ -1702,6 +1703,50 @@ section("52. 三组动画参数都必须稳定（不许 bang-bang 自激振荡�
   // ③ 把发病参数写进测试：它必须被判据拦住（说明判据真的能防住这个 bug）
   const BAD = { K: 120, A: 600, k: 200, amax: 1200, vmax: 20 };
   ok(BAD.amax / 60 > 0.5 * BAD.vmax, "[52] 1.1.2 的旧简洁参数不满足稳定判据（正是 issue #12 的根因）");
+}
+
+
+section("53. 官方菜单里只有一条滑条，Model 那一行之上不再有横幅");
+{
+  const ctx = await setup();
+  const { menu, react } = ctx;
+
+  // Model 那一行之上不许再有任何东西（用户明确否掉了横幅）
+  ok(menu.menu.children.indexOf(menu.modelRow) === 0, "[53] Model 那一行仍然是 popover 的第一个子节点");
+  eq(react.find("header"), null, "[53] 没有横幅内容");
+  eq(react.findAll("header-track").length, 0, "[53] 没有第二条轨道");
+  eq(react.findAll("header-label").length, 0, "[53] 没有横幅档位词");
+
+  // 但那一条推理等级滑条照旧在，而且只有一条
+  const sliderPortals = react.portalHosts.filter((node) => node.getAttribute && node.getAttribute("data-ces-part") === "host");
+  eq(sliderPortals.length, 1, "[53] 推理等级那一行里只有一条滑条");
+  eq(react.findAll("track").length, 1, "[53] 整个 popover 只有一条轨道");
+  eq(react.findAll("tick").length, 4, "[53] 那条滑条有 4 个刻度（4 档模型）");
+  eq(react.findAll("knob").length, 1, "[53] 整个 popover 只有一个旋钮");
+  eq(react.find("track").getAttribute("role"), "slider", "[53] 它仍然是可交互的滑条");
+}
+
+section("54. 同一行只许有一条滑条（前任包/重复加载都不能多画一条）");
+{
+  // ① 模块求值阶段就占住前任包的唯一实例键：旧的一份即使还活在本页模块图里也画不出来
+  const document = createDocument();
+  const bundle = loadBundle(BUNDLE, document, {});
+  ok(bundle.window.__cesActiveSliderOwner !== undefined && bundle.window.__cesActiveSliderOwner !== null, "[54] 模块加载即占住前任包的唯一实例键");
+
+  // ② 行里已经被"别的一份"挂了容器：扫一次后只剩我们这一条
+  const menu = createOfficialMenu(document);
+  const stale = document.createElement("div");
+  stale.className = "ces-inline";
+  stale.setAttribute("data-ces-part", "host");
+  menu.effortRow.appendChild(stale);
+  const host = createFakeHost({});
+  bundle.plugin.apply(host.ctx);
+  bundle.react.mount(host.registered[0].Component, { sessionId: "session-abcdef" }, menu.composer);
+  await settle();
+  eq(menu.effortRow.querySelectorAll('[data-ces-part="host"]').length, 1, "[54] 那一行只剩一条滑条容器");
+  ok(menu.effortRow.children.indexOf(stale) < 0, "[54] 别份留下的容器被摘掉");
+  eq(bundle.react.findAll("tick").length, 4, "[54] 只剩一套刻度（没有两条滑条叠着）");
+  eq(bundle.react.findAll("knob").length, 1, "[54] 只剩一个旋钮");
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Reasoning Effort Slider",
-    "description": "A Codex-style reasoning-effort slider for DeepSeek Harness"
+    "title": "Model Quick Selector",
+    "description": "Right-click the model selector to pick and order quick models; drag vertically to switch between them"
   }
 }

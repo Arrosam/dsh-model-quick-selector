@@ -134,6 +134,11 @@ const constantNames = [
   // 模型席拖动换档的档位条：CSS 数组里插值了这两个尺寸
   "SEAT_BAR_PAD_X_PX",
   "SEAT_BAR_TRACK_PX",
+  // 快速选择（展开列表 / 设置面板 / 行内滑条）：CSS 数组里插值了这些尺寸
+  "QUICK_ROW_PX",
+  "QUICK_LIST_WIDTH_PX",
+  "QUICK_LIST_PAD_PX",
+  "QUICK_PANEL_WIDTH_PX",
   // 连续运动引擎的参数（预览页的拖动逻辑要用同一套，否则观感与真插件不一致）
   // 设置 schema 与版本号（normalizeSettings / readSettings 依赖）
   "SETTINGS_SCHEMA",
@@ -195,7 +200,7 @@ const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>dsh-codex-effort-slider — 观感预览（官方菜单那一行）</title>
+<title>dsh-model-quick-selector — 推理等级滑条观感预览（官方菜单那一行）</title>
 <style>
 /* ── 预览页自带的最小主题令牌（取自 DSH 官方 ui-theme 的真实取值）──
    真插件在 DSH 里直接用官方令牌，这里只是为了在浏览器里还原同一套观感。 */

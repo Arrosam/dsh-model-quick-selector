@@ -1,3 +1,4 @@
+# 行 id 必须与 lib/client.js 里的 QUICK_SETTINGS_ENTRY 一致：快速选择列表存在这一行的 config 里。
 - insert:
-    - id: codex-effort-slider
-      name: dsh-codex-effort-slider
+    - id: model-quick-selector
+      name: dsh-model-quick-selector

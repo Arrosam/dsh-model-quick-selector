@@ -1,14 +1,17 @@
 {
-  "name": "dsh-codex-effort-slider",
-  "version": "1.1.2",
-  "description": "Codex 风格的推理等级滑条：把 DSH 输入框工具行的推理等级档位换成一条可拖动的连续滑条 / A Codex-style reasoning-effort slider for DeepSeek Harness",
+  "name": "dsh-model-quick-selector",
+  "version": "2.3.0",
+  "description": "Quick-select model list for the DSH model selector: right-click to choose and order models, drag vertically to switch between them",
   "license": "MIT",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
+    "model-selector",
+    "quick-select",
     "reasoning-effort",
     "slider",
+    "i18n",
     "ui"
   ],
   "type": "module",
@@ -21,6 +24,7 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "locale",
     "cordis.patch.yml",
     "screenshots.json",
     "install-profile.ps1",
@@ -28,10 +32,11 @@
     "LICENSE",
     "test",
     "preview",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "node test/client.test.mjs && node test/seat-drag.test.mjs",
+    "test": "node test/client.test.mjs && node test/seat-drag.test.mjs && node test/quick-select.test.mjs",
     "preview": "node preview/make-preview.mjs",
     "pack": "powershell -NoProfile -ExecutionPolicy Bypass -File ./pack-dist.ps1"
   },
@@ -44,7 +49,14 @@
     },
     "client": {
       "platform": "web",
-      "immediately": true
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
   }
 }

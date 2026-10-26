@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>dsh-codex-effort-slider — 观感预览（官方菜单那一行）</title>
+<title>dsh-model-quick-selector — 推理等级滑条观感预览（官方菜单那一行）</title>
 <style>
 /* ── 预览页自带的最小主题令牌（取自 DSH 官方 ui-theme 的真实取值）──
    真插件在 DSH 里直接用官方令牌，这里只是为了在浏览器里还原同一套观感。 */
@@ -39,8 +39,9 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;gap:18px;padding:
 .ces-tick[data-on='1']{background:rgba(255,255,255,.5)}
 .ces-knob{position:absolute;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.34),0 0 0 .5px rgba(0,0,0,.06);pointer-events:none}
 .ces-error{margin-top:6px;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,#e5484d)}
-.ces-inline[data-energy='1'] .ces-track{box-shadow:0 0 calc(var(--ces-energy,0) * 16px) rgba(168,85,247,.5)}
-.ces-inline[data-energy='0'] .ces-star,.ces-inline[data-energy='0'] .ces-energy__sweep{animation-play-state:paused}
+.ces-energy-root{--ces-accent:var(--dsw-alias-state-business-primary,var(--dsw-static-blue-450,#4d93f8))}
+.ces-inline[data-energy='1'] .ces-track,.ces-energy-root[data-energy='1'] .ces-track{box-shadow:0 0 calc(var(--ces-energy,0) * 16px) rgba(168,85,247,.5)}
+.ces-inline[data-energy='0'] .ces-star,.ces-energy-root[data-energy='0'] .ces-star,.ces-inline[data-energy='0'] .ces-energy__sweep,.ces-energy-root[data-energy='0'] .ces-energy__sweep{animation-play-state:paused}
 .ces-energy{position:absolute;top:0;bottom:0;left:0;border-radius:14px 0 0 14px;overflow:hidden;pointer-events:none;opacity:var(--ces-energy,0);transition:opacity .2s ease;background:linear-gradient(90deg,#3b1178 0%,#6d28d9 30%,#9333ea 62%,#c084fc 100%)}
 .ces-stars{position:absolute;top:0;bottom:0;left:0;border-radius:14px 0 0 14px;overflow:hidden;pointer-events:none;transition:opacity .2s ease}
 .ces-star{position:absolute;left:0;right:0;height:3px;margin-top:-1.5px;pointer-events:none;animation-name:ces-star-sweep;animation-timing-function:linear;animation-iteration-count:infinite}
@@ -59,8 +60,37 @@ body[data-ds-dark-theme] .ces-star__dot{background:#f5f3ff;box-shadow:0 0 5px rg
 .ces-set button{cursor:pointer;font:inherit;color:inherit;padding:4px 10px;border-radius:6px;border:1px solid rgba(127,127,127,.35);background:transparent}
 .ces-set button:hover{background:rgba(127,127,127,.14)}
 body[data-ds-dark-theme] .ces-set{background:var(--dsw-alias-bg-base,#24262c);color:var(--dsw-alias-label-pri,#e8e9ec)}
-.ces-inline[data-reached-ticks='dim'] .ces-tick[data-on='1']{background:rgba(128,128,128,.30);background:color-mix(in srgb,var(--dsw-alias-label-primary,#0f1115) 26%,transparent)}
-.ces-inline[data-reached-ticks='hidden'] .ces-tick[data-on='1']{display:none}
+.ces-inline[data-reached-ticks='dim'] .ces-tick[data-on='1'],.ces-energy-root[data-reached-ticks='dim'] .ces-tick[data-on='1']{background:rgba(128,128,128,.30);background:color-mix(in srgb,var(--dsw-alias-label-primary,#0f1115) 26%,transparent)}
+.ces-inline[data-reached-ticks='hidden'] .ces-tick[data-on='1'],.ces-energy-root[data-reached-ticks='hidden'] .ces-tick[data-on='1']{display:none}
+.ces-seatbar{position:fixed;z-index:1200;width:auto;flex-basis:auto;padding:6px 10px 10px;border-radius:12px;background:var(--dsw-alias-bg-base,#fff);border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.28));box-shadow:0 8px 24px rgba(0,0,0,.18);pointer-events:none}
+.ces-seatbar .ces-track{width:160px;cursor:grabbing}
+.ces-seatbar .ces-fill{transition:width .08s ease-out}
+.ces-seatbar .ces-energy,.ces-seatbar .ces-stars{transition:width .08s ease-out,opacity .2s ease}
+.ces-seatbar .ces-knob{transition:left .08s ease-out}
+.ces-seatbar__value{display:block;margin-bottom:4px;text-align:center;font:600 12px/18px system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--dsw-alias-label-secondary,#5c5f66)}
+body[data-ds-dark-theme] .ces-seatbar{background:var(--dsw-alias-bg-base,#24262c)}
+.mqs-list,.mqs-panel{position:fixed;z-index:1200;box-sizing:border-box;border-radius:12px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#1b1c20);border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.28));box-shadow:0 8px 24px rgba(0,0,0,.18);font:400 13px/20px system-ui,-apple-system,'Segoe UI',sans-serif}
+.mqs-list{width:360px;padding:4px;pointer-events:none;user-select:none;-webkit-user-select:none}
+.mqs-row{box-sizing:border-box;height:32px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;border-radius:8px;white-space:nowrap}
+.mqs-row[data-active='1']{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+.mqs-row[data-current='1'] .mqs-name{font-weight:600}
+.mqs-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mqs-panel{width:300px;max-height:min(480px,100vh - 32px);overflow-y:auto;padding:10px 12px}
+.mqs-panel__title{font-weight:600;margin:0 0 2px}
+.mqs-panel__note{font-size:12px;color:var(--dsw-alias-label-tertiary,#8a8f99);margin:0 0 8px}
+.mqs-panel__section{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#5c5f66);margin:10px 0 4px}
+.mqs-chosen{position:relative;touch-action:none}
+.mqs-chip{box-sizing:border-box;height:32px;display:flex;align-items:center;gap:8px;padding:0 6px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.10));margin-bottom:0;cursor:grab;user-select:none;-webkit-user-select:none}
+.mqs-chip+.mqs-chip{box-shadow:0 -1px 0 var(--dsw-alias-bg-base,#fff)}
+.mqs-chip[data-dragging='1']{cursor:grabbing;background:var(--dsw-alias-state-business-primary,#4d93f8);color:#fff}
+.mqs-chip__handle{opacity:.55;flex:none}
+.mqs-chip__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mqs-chip__remove{flex:none;cursor:pointer;border:none;background:transparent;color:inherit;font:inherit;padding:0 4px;opacity:.7}
+.mqs-option{display:flex;align-items:center;gap:8px;min-height:28px;cursor:pointer;border-radius:6px;padding:0 4px}
+.mqs-option:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.mqs-option__provider{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8f99);margin-left:auto}
+.mqs-panel__error{font-size:12px;color:var(--dsw-alias-state-error-primary,#e5484d);margin-top:6px}
+body[data-ds-dark-theme] .mqs-list,body[data-ds-dark-theme] .mqs-panel{background:var(--dsw-alias-bg-base,#24262c);color:var(--dsw-alias-label-pri,#e8e9ec)}
 </style>
 </head>
 <body>
@@ -366,14 +396,6 @@ function schemaDefaults() {
       return out;
     }
 
-function cacheGet() { return (typeof settingsCache === "undefined") ? null : settingsCache; }
-
-function cacheSet(value) { if (typeof settingsCache !== "undefined") settingsCache = value; }
-
-function settingsKey() { return (typeof SETTINGS_KEY === "undefined") ? "dsh-codex-effort-slider.settings" : SETTINGS_KEY; }
-
-function settingsEventName() { return (typeof SETTINGS_EVENT === "undefined") ? "dsh-codex-effort-slider:settings" : SETTINGS_EVENT; }
-
 function motionMode() {
       var mode = readSettings().motion;
       return mode === "quick" || mode === "fast" ? mode : "full";
@@ -386,16 +408,6 @@ function motionParamsForMode() {
       return MOTION;
     }
 
-function detentTargetIndex(pos, cur, count, third) {
-      if (count <= 1) return 0;
-      var th = (typeof third === "number" && third > 0 && third < 0.5) ? third : 1 / 3;
-      var lo = Math.max(0, Math.min(count - 1, typeof cur === "number" ? cur : 0));
-      var p = Math.max(0, Math.min(count - 1, pos));
-      if (p >= lo + th) return Math.min(count - 1, Math.max(lo + 1, Math.round(p)));
-      if (p <= lo - (1 - th)) return Math.max(0, Math.min(lo - 1, Math.round(p)));
-      return lo;
-    }
-
 /* ⚠️ 这里**由 constantNames 自动生成**，不再手写清单 ——
    早先手写过，结果新增常量忘了加，预览页一按下就 ReferenceError 整页挂掉。
    手写清单与 constantNames 必须同步，这种"两处维护"迟早漏一侧。 */
@@ -404,11 +416,14 @@ var TRACK_HEIGHT = 28;
 var KNOB_SIZE = 28;
 var KNOB_RADIUS = 14;
 var FILL_RADIUS = "border-radius:14px 0 0 14px";
+var SEAT_BAR_PAD_X_PX = 10;
+var SEAT_BAR_TRACK_PX = 160;
+var QUICK_ROW_PX = 32;
+var QUICK_LIST_WIDTH_PX = 360;
+var QUICK_LIST_PAD_PX = 4;
+var QUICK_PANEL_WIDTH_PX = 300;
 var SETTINGS_SCHEMA = [{"key":"motion","kind":"radio","group":"动画效果","label":"动画效果","default":"full","options":[{"value":"fast","label":"快速动画"},{"value":"quick","label":"简洁动画"},{"value":"full","label":"完整动画"}]},{"key":"reachedTicks","kind":"radio","group":"已到达档位的刻度点","label":"刻度点","default":"hidden","options":[{"value":"highlight","label":"亮白显示"},{"value":"dim","label":"与未到达同色"},{"value":"hidden","label":"隐藏"}]}];
 var SETTINGS_VERSION = 3;
-var SETTINGS_KEY = "dsh-codex-effort-slider.settings";
-var SETTINGS_EVENT = "dsh-codex-effort-slider:settings";
-var settingsCache = null;
 var MOTION = {"K":20,"A":120,"k":40,"amax":240,"vmax":6,"epsX":0.0015,"epsV":0.02};
 var MOTION_REDUCED = {"K":40,"A":300,"k":40,"amax":200,"vmax":7,"epsX":0.0015,"epsV":0.02};
 var MOTION_FAST = {"K":60,"A":500,"k":60,"amax":300,"vmax":10,"epsX":0.0015,"epsV":0.02};
@@ -636,30 +651,14 @@ function onMove(clientX) {
   }
   lastPtrPct = pct;
   lastPointerAt = now;
-  var count = LEVELS[current].length;
-  if (motionMode() === "fast") {
-    // 快速动画（Codex 手感）：不跟手 —— 目标永远是档位格，越过 1/3 档距才进一格（后退 2/3）。
-    var pos = pct * Math.max(1, count - 1);
-    if (!(detentIndex >= 0)) detentIndex = indexFromPct(motion.target, count);
-    detentIndex = detentTargetIndex(pos, detentIndex, count, DETENT_THIRD);
-    motion.target = pctFromIndex(detentIndex, count);
-  } else {
-    motion.target = pct;   // ← 只改目标
-  }
+  motion.target = pct;   // ← 只改目标
   startFrames();
 }
-
-var detentIndex = -1;
 
 track.addEventListener("pointerdown", function (event) {
   dragging = true;
   snapIndex = null;
   lastPtrPct = null;
-  detentIndex = -1;
-  if (motionMode() === "fast") {
-    var p0 = pctAt(event.clientX);
-    if (p0 !== null) detentIndex = indexFromPct(p0, LEVELS[current].length);
-  }
   track.setPointerCapture(event.pointerId);
   onMove(event.clientX);
 });
@@ -667,19 +666,10 @@ track.addEventListener("pointermove", function (event) { if (dragging) onMove(ev
 function end() {
   if (!dragging) return;
   dragging = false;
-  var count = LEVELS[current].length;
-  if (motionMode() === "fast") {
-    // 快速动画：拖动中目标已经推到格子上，松手不再外推（与真实插件一致）
-    snapIndex = detentIndex >= 0 ? detentIndex : indexFromPct(motion.target, count);
-    snapIndex = Math.max(0, Math.min(count - 1, snapIndex));
-    motion.target = pctFromIndex(snapIndex, count);
-    motion.vPtr = 0;
-  } else {
-    // 松手：按指针速度外推落点，目标改为档位点，**速度继承**
-    snapIndex = releaseIndexFor(motion.target, motion.vPtr, count);
-    motion.target = pctFromIndex(snapIndex, count);
-    motion.vPtr = 0;
-  }
+  // 松手：按指针速度外推落点，目标改为档位点，**速度继承**
+  snapIndex = releaseIndexFor(motion.target, motion.vPtr, LEVELS[current].length);
+  motion.target = pctFromIndex(snapIndex, LEVELS[current].length);
+  motion.vPtr = 0;
   startFrames();
 }
 track.addEventListener("pointerup", end);
