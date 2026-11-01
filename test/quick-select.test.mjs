@@ -117,27 +117,27 @@ function teardown() { while (live.length) { try { live.pop().react.unmount(); } 
 /* ── merged settings menu helpers: open the official popover first, then click its gear ── */
 
 function gearOf(ctx) {
-  const gear = ctx.document.querySelector('[data-ces-part="menu-gear"]');
+  const gear = ctx.document.querySelector('[data-ces-part="model-gear"]');
   if (gear === null) throw new Error("official popover has no settings gear");
   return gear;
 }
 
-/** The official Model select popover must be open for its (DOM-bridge) header strip to exist. */
+/** The official Model select popover must be open for its (DOM-bridge) gear to exist. */
 async function openOfficialMenu(ctx) {
   ctx.menu.seat.setAttribute("aria-expanded", "true");
   ctx.bundle.flushObservers();       // official React re-render → bridge scan
   await settle();
 }
 
-/** Click the settings gear and return the one body-level settings menu. */
-async function openSettingsPanel(ctx) {
+/** Click the Model-row gear and return the one body-level modal's dialog card. */
+async function openSettingsModal(ctx) {
   await openOfficialMenu(ctx);
   gearOf(ctx).dispatch("click", { clientX: ORIGIN.x, clientY: ORIGIN.y, detail: 1 });
   await settle();
-  return ctx.react.find("quick-panel");
+  return ctx.react.find("settings-card");
 }
 
-async function closeSettingsPanel(ctx) {
+async function closeSettingsModal(ctx) {
   ctx.document.dispatch("keydown", { key: "Escape" });
   await settle();
 }
@@ -331,12 +331,18 @@ await run("[Q1]", async () => {
   await openOfficialMenu(ctx);
   ctx.menu.seat.dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
   await settle();
-  eq(ctx.react.findAll("quick-panel").length, 0, "[Q1] right-click the model seat no longer opens the panel");
-  const panel = await openSettingsPanel(ctx);
-  ok(panel !== null, "[Q1] clicking the gear opens the panel");
+  eq(ctx.react.findAll("quick-panel").length, 0, "[Q1] right-click the model seat no longer opens the old panel");
+  eq(ctx.react.findAll("settings-modal").length, 0, "[Q1] right-click the model seat does not open the modal either");
+  const panel = await openSettingsModal(ctx);
+  ok(panel !== null, "[Q1] clicking the gear opens the modal");
   eq(panel.getAttribute("data-pane"), "root", "[Q1] it opens on the quick-model pane");
-  eq(ctx.document.body.querySelectorAll('[data-ces-part="quick-panel"]').length, 1, "[Q1] exactly one body-level panel");
-  eq(ctx.react.findAll("quick-option").map((o) => o.getAttribute("data-model")), ["flash", "opus", "haiku"], "[Q1] panel lists every catalog model");
+  eq(panel.getAttribute("role"), "dialog", "[Q1] the modal card is a dialog");
+  const modal = ctx.react.find("settings-modal");
+  ok(modal !== null, "[Q1] the modal has an outer .mqs-modal backdrop");
+  eq(ctx.document.body.querySelectorAll('[data-ces-part="settings-modal"]').length, 1, "[Q1] exactly one body-level modal");
+  eq(ctx.react.findAll("quick-panel").length, 0, "[Q1] the old side-panel element is gone");
+  eq(ctx.menu.menu.contains(modal), false, "[Q1] the modal is portaled outside the official popover");
+  eq(ctx.react.findAll("quick-option").map((o) => o.getAttribute("data-model")), ["flash", "opus", "haiku"], "[Q1] modal lists every catalog model");
   const tick = async (model) => {
     const input = ctx.react.findAll("quick-option").find((o) => o.getAttribute("data-model") === model).querySelector('[data-ces-part="quick-option-input"]');
     input.fire("onChange", {});
@@ -365,11 +371,11 @@ await run("[Q1]", async () => {
   remove.fire("onClick", {});
   await settle();
   eq(ctx.form.sets.at(-1)[1], [item(FLASH), item(HAIKU)], "[Q1] × removes from the list");
-  await closeSettingsPanel(ctx);
-  eq(ctx.react.findAll("quick-panel").length, 0, "[Q1] Escape closes the panel");
+  await closeSettingsModal(ctx);
+  eq(ctx.react.findAll("settings-modal").length, 0, "[Q1] Escape closes the modal");
   ctx.react.find("track").dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
   await settle();
-  eq(ctx.react.findAll("quick-panel").length, 0, "[Q1] right-click the effort slider never opens the panel");
+  eq(ctx.react.findAll("settings-modal").length, 0, "[Q1] right-click the effort slider never opens the modal");
   eq(ctx.document.documentElement.listeners.has("contextmenu"), false, "[Q1] no document-level contextmenu handler is installed");
 
   // Q2: a fresh load (app restart, another project) reading the same Host form sees the same list.
@@ -471,25 +477,28 @@ await run("[Q11]", async () => {
   eq(ctx.host.registered[0].opts.label(), "推理等级", "[Q11] the slot label follows the language too");
 
   // The gear lives in the official popover; open it, then click the gear.
-  let panel = await openSettingsPanel(ctx);
+  let panel = await openSettingsModal(ctx);
   const gear = gearOf(ctx);
   eq(gear.getAttribute("aria-label"), "快速选择与动画设置", "[Q11] gear aria-label in Chinese");
   eq(gear.getAttribute("title"), "快速选择与动画设置", "[Q11] gear title in Chinese");
   eq(panel.getAttribute("data-pane"), "root", "[Q11] the gear opens the root pane");
+  eq(ctx.react.find("settings-title").textContent, "快速选择模型", "[Q11] modal title in Chinese");
+  eq(ctx.react.find("settings-close").getAttribute("aria-label"), "关闭", "[Q11] close button label in Chinese");
+  eq(ctx.react.find("settings-close").getAttribute("title"), "关闭", "[Q11] close button title in Chinese");
   ok(panel.textContent.indexOf("快速选择模型") >= 0, "[Q11] title in Chinese");
   ok(panel.textContent.indexOf("在模型按钮上竖向拖动即可在这些模型间切换。") >= 0, "[Q11] hint in Chinese");
   ok(panel.textContent.indexOf("已选（拖动排序）") >= 0, "[Q11] chosen section in Chinese");
   ok(panel.textContent.indexOf("全部模型") >= 0, "[Q11] catalog section in Chinese");
   ok(panel.textContent.indexOf("动画设置") >= 0, "[Q11] animation submenu row in Chinese");
   ok(panel.textContent.indexOf("推理") < 0 && panel.textContent.indexOf("左右") < 0, "[Q11] the hint no longer mentions effort");
-  eq(panel.getAttribute("aria-label"), "快速选择模型设置", "[Q11] panel aria-label in Chinese");
+  eq(panel.getAttribute("aria-label"), "快速选择模型设置", "[Q11] dialog aria-label in Chinese");
   eq(ctx.react.find("quick-chip").getAttribute("title"), "拖动排序", "[Q11] chip title in Chinese");
   eq(ctx.react.find("quick-chip-remove").getAttribute("aria-label"), "移除 deepseek-v4.1-flash", "[Q11] remove label in Chinese, name filled in");
 
   // The animation pane is the submenu of this same menu.
   ctx.react.find("quick-anim-entry").fire("onClick", {});
   await settle();
-  panel = ctx.react.find("quick-panel");
+  panel = ctx.react.find("settings-card");
   eq(panel.getAttribute("data-pane"), "anim", "[Q11] the submenu entry opens the animation pane");
   for (const text of ["返回", "动画设置", "动画效果", "快速动画", "简洁动画", "完整动画", "已到达档位的刻度点", "亮白显示", "与未到达同色", "隐藏", "恢复默认"]) {
     ok(panel.textContent.indexOf(text) >= 0, "[Q11] animation pane label in Chinese: " + text);
@@ -500,34 +509,36 @@ await run("[Q11]", async () => {
     "[Q11] the reachedTicks field label is Chinese");
   ctx.react.find("anim-back").fire("onClick", {});
   await settle();
-  eq(ctx.react.find("quick-panel").getAttribute("data-pane"), "root", "[Q11] the back row returns to the quick-model pane");
-  await closeSettingsPanel(ctx);
+  eq(ctx.react.find("settings-card").getAttribute("data-pane"), "root", "[Q11] the back row returns to the quick-model pane");
+  await closeSettingsModal(ctx);
 
   // Switch the language: the seat's t reads the active language on every call, so the next
-  // render (here: closing and reopening the menu) shows English.
+  // render (here: closing and reopening the modal) shows English.
   locale.setLocale("en");
-  panel = await openSettingsPanel(ctx);
+  panel = await openSettingsModal(ctx);
   eq(gearOf(ctx).getAttribute("aria-label"), "Quick selection and animation settings", "[Q11] gear aria-label follows the new language");
   eq(gearOf(ctx).getAttribute("title"), "Quick selection and animation settings", "[Q11] gear title follows too");
+  eq(ctx.react.find("settings-title").textContent, "Quick model selection", "[Q11] modal title follows the new language");
+  eq(ctx.react.find("settings-close").getAttribute("aria-label"), "Close", "[Q11] close button label follows too");
   ok(panel.textContent.indexOf("Quick model selection") >= 0, "[Q11] title follows the new language");
   ok(panel.textContent.indexOf("Drag the model button vertically to switch between these models.") >= 0, "[Q11] hint follows too");
   ok(panel.textContent.indexOf("Selected (drag to reorder)") >= 0, "[Q11] chosen section follows too");
   ok(panel.textContent.indexOf("All models") >= 0, "[Q11] catalog section follows too");
   ok(panel.textContent.indexOf("Animation settings") >= 0, "[Q11] animation submenu row follows too");
   ok(!/[\u4e00-\u9fff]/.test(allStrings(panel)), "[Q11] no Chinese left anywhere in the English root pane (text + attributes)");
-  eq(panel.getAttribute("aria-label"), "Quick model selection settings", "[Q11] panel aria-label follows too");
+  eq(panel.getAttribute("aria-label"), "Quick model selection settings", "[Q11] dialog aria-label follows too");
   eq(ctx.react.find("quick-chip-remove").getAttribute("aria-label"), "Remove deepseek-v4.1-flash", "[Q11] remove label follows too");
 
   ctx.react.find("quick-anim-entry").fire("onClick", {});
   await settle();
-  panel = ctx.react.find("quick-panel");
+  panel = ctx.react.find("settings-card");
   for (const text of ["Back", "Animation settings", "Animation mode", "Fast animation", "Concise animation", "Full animation", "Reached level ticks", "Bright white", "Same as unreached", "Hidden", "Reset to defaults"]) {
     ok(panel.textContent.indexOf(text) >= 0, "[Q11] animation pane label in English: " + text);
   }
   ok(!/[\u4e00-\u9fff]/.test(allStrings(panel)), "[Q11] no Chinese left anywhere in the English animation pane");
   ctx.react.find("anim-back").fire("onClick", {});
   await settle();
-  await closeSettingsPanel(ctx);
+  await closeSettingsModal(ctx);
 
   const g = gesture(ctx);
   g.down();
@@ -542,21 +553,23 @@ await run("[Q11]", async () => {
   // A model in the stored list that the catalog no longer offers is labelled in the same language.
   const zhAgain = createFakeLocale("zh");
   const gone = await setup({ list: [{ provider: P, model: "ghost" }], locale: zhAgain });
-  const gonePanel = await openSettingsPanel(gone);
+  const gonePanel = await openSettingsModal(gone);
   ok(gonePanel.textContent.indexOf("ghost（当前不可用）") >= 0, "[Q11] unavailable suffix in Chinese");
   teardown();
 
   // No locale service at all (bare composition / offline tests): same dictionary, English fallback.
   const bare = await setup({ list: [item(FLASH)] });
-  const barePanel = await openSettingsPanel(bare);
+  const barePanel = await openSettingsModal(bare);
   ok(barePanel.textContent.indexOf("Quick model selection") >= 0, "[Q11] without the service the copy falls back to English");
   ok(!/[\u4e00-\u9fff]/.test(allStrings(barePanel)), "[Q11] and never leaks hard-coded Chinese");
+  eq(bare.react.find("settings-title").textContent, "Quick model selection", "[Q11] fallback modal title is English");
+  eq(bare.react.find("settings-close").getAttribute("aria-label"), "Close", "[Q11] fallback close label is English");
   eq(gearOf(bare).getAttribute("aria-label"), "Quick selection and animation settings", "[Q11] fallback gear label is English");
   eq(bare.react.find("quick-chip-remove").getAttribute("aria-label"), "Remove deepseek-v4.1-flash",
     "[Q11] fallback fills {name} in the remove label");
   bare.react.find("quick-anim-entry").fire("onClick", {});
   await settle();
-  const bareAnim = bare.react.find("quick-panel");
+  const bareAnim = bare.react.find("settings-card");
   ok(bareAnim.textContent.indexOf("Animation settings") >= 0, "[Q11] fallback animation pane is English");
   ok(!/[\u4e00-\u9fff]/.test(allStrings(bareAnim)), "[Q11] fallback animation pane has no Chinese");
 });

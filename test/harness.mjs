@@ -159,7 +159,11 @@ class FakeNode {
     this.capturedPointer = null;
   }
 
-  focus() {}
+  /** 记录被聚焦：假 DOM 没有 activeElement，测试用它观察“打开弹窗时焦点进卡片”。 */
+  focus(options) {
+    this.focusCalls = (this.focusCalls ?? 0) + 1;
+    this.focusOptions = options;
+  }
 
   querySelectorAll(selector) {
     const out = [];

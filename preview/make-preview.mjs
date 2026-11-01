@@ -138,7 +138,8 @@ const constantNames = [
   "QUICK_ROW_PX",
   "QUICK_LIST_WIDTH_PX",
   "QUICK_LIST_PAD_PX",
-  "QUICK_PANEL_WIDTH_PX",
+  "SETTINGS_MODAL_WIDTH_PX",
+  "SETTINGS_MODAL_MAX_HEIGHT_PX",
   // 连续运动引擎的参数（预览页的拖动逻辑要用同一套，否则观感与真插件不一致）
   // 设置 schema 与版本号（normalizeSettings / readSettings 依赖）
   "SETTINGS_SCHEMA",

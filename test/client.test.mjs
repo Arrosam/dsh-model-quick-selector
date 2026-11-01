@@ -12,7 +12,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createDocument, createFakeHost, createOfficialMenu, loadBundle, settle, wait, snapshotFor } from "./harness.mjs";
+import { createDocument, createFakeHost, createFakeLocale, createOfficialMenu, loadBundle, settle, wait, snapshotFor } from "./harness.mjs";
 
 const BUNDLE = fileURLToPath(new URL("../lib/client.js", import.meta.url));
 const SOURCE = readFileSync(BUNDLE, "utf8");
@@ -55,6 +55,8 @@ function section(title) {
 async function setup(options = {}) {
   const document = createDocument();
   const menu = createOfficialMenu(document, options.menu);
+  // 有些用例需要证明"退出时把官方原来的内联值原样写回"，所以在首次扫描前预置官方内联值。
+  if (options.menuInline) Object.assign(menu.menu.style, options.menuInline);
   const bundle = loadBundle(BUNDLE, document, { reducedMotion: options.reducedMotion === true });
   const host = createFakeHost(options.host ?? {});
   // 合并设置菜单里的快速选择列表要走官方 configForms；测试按需注入一个假表单。
@@ -138,21 +140,21 @@ function cssValue(node, prop) {
 
 /* ── 合并设置菜单的测试动作（全部走用户能看到的东西：齿轮按钮 / 菜单节点） ── */
 
-/** 官方模型 popover 顶部那条设置入口里的齿轮按钮。 */
+/** 官方模型 popover 里、Model 行右侧槽中的齿轮按钮（DOM 桥挂在官方菜单卡上）。 */
 function gearOf(ctx) {
-  const gear = ctx.menu.menu.querySelector('[data-ces-part="menu-gear"]');
-  if (gear === null) throw new Error("官方 popover 顶部没有设置齿轮（menu-gear）");
+  const gear = ctx.menu.menu.querySelector('[data-ces-part="model-gear"]');
+  if (gear === null) throw new Error("官方 popover 里没有设置齿轮（model-gear）");
   return gear;
 }
 
-/** 点击齿轮，等 React 落定，返回新的 body 级设置菜单。 */
+/** 点击齿轮，等 React 落定，返回 body 级弹窗里的 dialog 卡片。 */
 async function openSettings(ctx) {
   gearOf(ctx).dispatch("click", { clientX: 640, clientY: 400, detail: 1 });
   await settle();
-  return ctx.react.find("quick-panel");
+  return ctx.react.find("settings-card");
 }
 
-/** Escape 关闭设置菜单（与用户按 Esc 一致）。 */
+/** Escape 关闭设置弹窗（与用户按 Esc 一致）。 */
 async function closeSettings(ctx) {
   ctx.document.dispatch("keydown", { key: "Escape" });
   await settle();
@@ -1789,35 +1791,210 @@ section("52. 三组动画参数都必须稳定（不许 bang-bang 自激振荡�
 }
 
 
-section("53. 官方菜单顶部是设置入口条，Model 行紧随其后；滑条照旧只有一条");
+section("53. 官方菜单加宽，Model 行右侧槽里挂设置齿轮；滑条照旧只有一条");
 {
   const ctx = await setup();
-  const { menu, react, internals } = ctx;
+  const { menu, react, internals: I, document } = ctx;
 
-  // 第一条是设置入口条（DOM 桥插在官方 React 树之外），Model 行被挤到第二个子节点。
-  const head = menu.menu.firstChild;
-  eq(head && head.getAttribute("data-ces-part"), "menu-head", "[53] popover 的第一个子节点是设置入口条");
-  eq(head.parentNode, menu.menu, "[53] 入口条就在官方 popover 里");
-  eq(menu.menu.children[1], menu.modelRow, "[53] Model 那一行紧随其后（官方内容没被挪走）");
-  eq(head.children.length, 1, "[53] 入口条里恰好只有一个按钮");
-  const gear = head.children[0];
-  eq(gear.getAttribute("data-ces-part"), "menu-gear", "[53] 那一个按钮就是设置图标");
-  eq(gear.tagName, "BUTTON", "[53] 设置图标是按钮（键盘/读屏可达）");
-  eq(gear.getAttribute("aria-label"), internals.QUICK_TEXT.en["gear.label"], "[53] aria-label 来自插件字典（无 locale 时为英文）");
-  eq(gear.getAttribute("title"), internals.QUICK_TEXT.en["gear.label"], "[53] title 同一份字典");
+  /* ── A. 加宽：边界值来自常量，min-width 带视口夹取，窄屏也不溢出 ── */
+  eq(I.MODEL_MENU_MIN_WIDTH_PX, 360, "[53] 面板最小宽度常量 = 360");
+  eq(I.MODEL_MENU_GEAR_GUTTER_PX, 36, "[53] 右侧齿轮槽常量 = 36");
+  ok(I.MODEL_MENU_GEAR_GUTTER_PX < I.MODEL_MENU_MIN_WIDTH_PX,
+    "[53] 槽宽小于面板宽（Model 行仍占得到位置）");
+  const expectedMinWidth = "min(" + I.MODEL_MENU_MIN_WIDTH_PX + "px, calc(100vw - 32px))";
+  eq(cssValue(menu.menu, "minWidth"), expectedMinWidth,
+    "[53] 官方菜单卡内联 min-width = min(360px, calc(100vw - 32px))（含视口夹取）");
+  ok(expectedMinWidth.indexOf(String(I.MODEL_MENU_MIN_WIDTH_PX)) >= 0,
+    "[53] 加宽字符串里带着常量 360（不是散落的魔法数字）");
+  ok(expectedMinWidth.indexOf("calc(100vw - 32px)") >= 0,
+    "[53] 视口窄于 360px 时按 100vw - 32px 收缩，不会横向出屏");
+  eq(cssValue(menu.menu, "paddingRight"), "",
+    "[53] 菜单卡不再写 padding-right（否则 Effort 行和滑条会被一起挤窄）");
+  eq(cssValue(menu.modelRow, "paddingRight"), I.MODEL_MENU_GEAR_GUTTER_PX + "px",
+    "[53] 齿轮槽只写在 Model 行：padding-right = 36px");
+  eq(cssValue(menu.effortRow, "paddingRight"), "",
+    "[53] Effort 行不留齿轮槽，和菜单内容区全宽对齐");
+  ok(I.modelRowIn(menu.menu, menu.effortRow) === menu.modelRow,
+    "[53] modelRowIn() 认出的是 Model 行（不是 Effort 行）");
+  eq(cssValue(menu.menu, "boxSizing"), "border-box",
+    "[53] box-sizing = border-box（宽度含内距，槽不会把面板撑宽）");
+  eq(cssValue(menu.menu, "width"), "",
+    "[53] 没有写成固定 width（钻取子面板时官方仍可按自己的宽度）");
 
-  // 入口条不是旧横幅：React 树里没有 header/档位词，官方两行原样保留。
-  eq(react.find("header"), null, "[53] 没有旧的横幅内容");
-  eq(react.findAll("header-track").length, 0, "[53] 没有第二条轨道");
-  eq(react.findAll("header-label").length, 0, "[53] 没有横幅档位词");
+  /* ── B. 齿轮是菜单卡的直接子节点，排在官方两行之后；没有旧的入口带 ── */
+  const gear = menu.menu.querySelector('[data-ces-part="model-gear"]');
+  ok(gear !== null, "[53] 根面板里有设置齿轮（data-ces-part=model-gear）");
+  ok(gear.parentNode === menu.menu, "[53] 齿轮是官方菜单卡的直接子节点");
+  eq(menu.menu.children.length, 3, "[53] 根面板恰好三个子节点：Model 行、Effort 行、齿轮");
+  ok(menu.menu.firstChild === menu.modelRow, "[53] 第一个子节点仍是官方 Model 行（不是入口带）");
+  ok(menu.menu.children[0] === menu.modelRow, "[53] Model 行保持官方顺序");
+  ok(menu.menu.children[1] === menu.effortRow, "[53] Effort 行保持官方顺序");
+  ok(menu.menu.children[2] === gear, "[53] 齿轮排在两个 menuitem 行之后");
+  ok(menu.menu.firstChild !== gear, "[53] 齿轮不是第一个子节点");
+  eq(menu.menu.querySelector('[data-ces-part="menu-head"]'), null, "[53] 没有旧的 menu-head 入口带");
+  eq(menu.menu.querySelector('[data-ces-part="menu-gear"]'), null, "[53] 没有旧的 menu-gear 节点");
+  eq(menu.menu.querySelectorAll('[data-ces-part="model-gear"]').length, 1, "[53] 齿轮只有一个");
+  ok(menu.modelRow.contains(gear) === false, "[53] 齿轮不在 Model 按钮里（按钮不能嵌按钮）");
+  ok(menu.effortRow.contains(gear) === false, "[53] 齿轮也不在 Effort 行里");
+  eq(gear.tagName, "BUTTON", "[53] 齿轮是按钮（键盘/读屏可达）");
+  eq(gear.getAttribute("type"), "button", "[53] 明确 type=button，不提交表单");
+  const gearClasses = String(gear.className).split(/\s+/);
+  ok(gearClasses.indexOf("mqs-gear") >= 0, "[53] 齿轮带 mqs-gear 基础类");
+  ok(gearClasses.indexOf("mqs-modelgear") >= 0, "[53] 齿轮带 mqs-modelgear 定位类");
+  ok(I.CSS.indexOf(".mqs-modelgear{position:absolute;top:9px;right:6px;z-index:1}") >= 0,
+    "[53] CSS 把齿轮绝对定位在右上槽（top:9px; right:6px）");
+  ok(I.CSS.indexOf(".mqs-gear{") >= 0 && I.CSS.indexOf("width:24px;height:24px") >= 0,
+    "[53] 齿轮本体是 24×24 的图标按钮");
+  eq(CODE.indexOf("menu-head"), -1, "[53] 产物里不再有 menu-head 这个结构名");
+  eq(CODE.indexOf("ensureHead"), -1, "[53] 产物里不再有旧的 ensureHead() 入口带函数");
+  eq(CODE.indexOf("menu-gear"), -1, "[53] 产物里不再有旧的 menu-gear 标识");
 
-  // 推理等级滑条照旧在，而且只有一条。
-  const sliderPortals = react.portalHosts.filter((node) => node.getAttribute && node.getAttribute("data-ces-part") === "host");
-  eq(sliderPortals.length, 1, "[53] 推理等级那一行里只有一条滑条");
+  /* ── C. aria-label / title 走同一份字典：中文、英文、无 locale 回退 ── */
+  eq(gear.getAttribute("aria-label"), I.QUICK_TEXT.en["gear.label"],
+    "[53] 无 locale 时 aria-label 回退英文");
+  eq(gear.getAttribute("title"), I.QUICK_TEXT.en["gear.label"], "[53] 无 locale 时 title 同一份英文");
+  const zhLocale = createFakeLocale("zh");
+  const zhCtx = await setup({
+    host: { locale: zhLocale },
+    props: { t: zhLocale.bind(I.QUICK_NS) },
+  });
+  const zhGear = zhCtx.menu.menu.querySelector('[data-ces-part="model-gear"]');
+  eq(zhGear.getAttribute("aria-label"), I.QUICK_TEXT.zh["gear.label"], "[53] 中文 aria-label = 快速选择与动画设置");
+  eq(zhGear.getAttribute("title"), I.QUICK_TEXT.zh["gear.label"], "[53] 中文 title 同步");
+  const enLocale = createFakeLocale("en");
+  const enCtx = await setup({
+    host: { locale: enLocale },
+    props: { t: enLocale.bind(I.QUICK_NS) },
+  });
+  const enGear = enCtx.menu.menu.querySelector('[data-ces-part="model-gear"]');
+  eq(enGear.getAttribute("aria-label"), I.QUICK_TEXT.en["gear.label"], "[53] 英文 aria-label = Quick selection and animation settings");
+  eq(enGear.getAttribute("title"), I.QUICK_TEXT.en["gear.label"], "[53] 英文 title 同步");
+
+  /* ── D. 点击齿轮 = 调用一次 onSettings()，不带任何锚点/指针参数 ── */
+  {
+    const bridgeDoc = createDocument();
+    const bridgeMenu = createOfficialMenu(bridgeDoc, {});
+    const calls = [];
+    const bridge = I.createMenuBridge({
+      doc: bridgeDoc,
+      win: null,
+      anchor: function () { return bridgeMenu.composer; },
+      active: function () { return true; },
+      onChange: function () {},
+      onSettings: function () { calls.push(Array.prototype.slice.call(arguments)); },
+      gearLabel: function () { return "gear"; },
+      seatLabels: function () { return []; },
+    });
+    ok(bridge !== null, "[53] DOM 桥可以单独构造（测试接缝）");
+    bridge.start();
+    const bridgeGear = bridgeMenu.menu.querySelector('[data-ces-part="model-gear"]');
+    ok(bridgeGear !== null, "[53] 桥启动后齿轮已挂上");
+    let stopped = 0;
+    bridgeGear.dispatch("click", {
+      clientX: 12, clientY: 34, detail: 1,
+      stopPropagation: function () { stopped += 1; },
+    });
+    eq(calls.length, 1, "[53] 点击齿轮只调用一次 onSettings");
+    eq(calls[0].length, 0, "[53] onSettings 无参数（不再传 anchor / 指针坐标）");
+    eq(stopped, 1, "[53] 点击事件被 stopPropagation（不会 drill 到模型列表）");
+    bridgeGear.dispatch("click", { stopPropagation: function () {} });
+    eq(calls.length, 2, "[53] 再点一次仍只是打开设置（每次一次）");
+    bridge.dispose();
+    eq(bridgeMenu.menu.querySelector('[data-ces-part="model-gear"]'), null, "[53] 桥 dispose 后齿轮被摘掉");
+    eq(cssValue(bridgeMenu.menu, "minWidth"), "", "[53] 桥 dispose 后恢复官方 min-width");
+  }
+
+  /* ── E. 滑条照旧只有一条（新入口没有抢走/复制滑条） ── */
+  const sliderPortals = () => react.portalHosts.filter((node) => node.getAttribute && node.getAttribute("data-ces-part") === "host");
+  eq(sliderPortals().length, 1, "[53] 推理等级那一行里只有一条滑条");
   eq(react.findAll("track").length, 1, "[53] 整个 popover 只有一条轨道");
   eq(react.findAll("tick").length, 4, "[53] 那条滑条有 4 个刻度（4 档模型）");
   eq(react.findAll("knob").length, 1, "[53] 整个 popover 只有一个旋钮");
   eq(react.find("track").getAttribute("role"), "slider", "[53] 它仍然是可交互的滑条");
+  eq(react.find("header"), null, "[53] 没有旧的横幅内容");
+  eq(react.findAll("header-track").length, 0, "[53] 没有第二条轨道");
+  eq(react.findAll("header-label").length, 0, "[53] 没有横幅档位词");
+
+  /* ── F. detach：关菜单 → 齿轮摘掉、三个内联值原样还原、滑条容器摘掉 ── */
+  menu.close();
+  ctx.bundle.flushObservers();
+  await settle();
+  eq(menu.menu.querySelector('[data-ces-part="model-gear"]'), null, "[53] 关闭菜单后齿轮被摘掉");
+  eq(cssValue(menu.menu, "minWidth"), "", "[53] 关闭后 min-width 还原为空（官方原值）");
+  eq(cssValue(menu.menu, "paddingRight"), "", "[53] 关闭后菜单卡 padding-right 仍为空");
+  eq(cssValue(menu.modelRow, "paddingRight"), "", "[53] 关闭后 Model 行 padding-right 还原为空");
+  eq(cssValue(menu.menu, "boxSizing"), "", "[53] 关闭后 box-sizing 还原为空");
+  eq(react.findAll("track").length, 0, "[53] 关闭后滑条不再渲染");
+  eq(menu.effortRow.querySelectorAll('[data-ces-part="host"]').length, 0, "[53] 关闭后滑条容器被摘掉");
+
+  /* ── G. re-attach：再开菜单 → 齿轮与新滑条各回来一次 ── */
+  menu.seat.setAttribute("aria-expanded", "true");
+  document.body.appendChild(menu.menu);
+  ctx.bundle.flushObservers();
+  await settle();
+  const reGear = menu.menu.querySelector('[data-ces-part="model-gear"]');
+  ok(reGear !== null, "[53] 重新打开菜单后齿轮重新挂上");
+  ok(reGear.parentNode === menu.menu, "[53] 重挂的齿轮仍是菜单卡直接子节点");
+  eq(menu.menu.querySelectorAll('[data-ces-part="model-gear"]').length, 1, "[53] 重挂后齿轮没有重复");
+  eq(cssValue(menu.menu, "minWidth"), expectedMinWidth, "[53] 重挂后再次加宽菜单");
+  eq(cssValue(menu.modelRow, "paddingRight"), I.MODEL_MENU_GEAR_GUTTER_PX + "px", "[53] 重挂后 Model 行再次留出齿轮槽");
+  eq(cssValue(menu.effortRow, "paddingRight"), "", "[53] 重挂后 Effort 行仍是全宽");
+  eq(cssValue(menu.menu, "paddingRight"), "", "[53] 重挂后菜单卡仍不写 padding-right");
+  eq(cssValue(menu.menu, "boxSizing"), "border-box", "[53] 重挂后仍是 border-box");
+  eq(react.findAll("track").length, 1, "[53] 重挂后滑条仍只有一条");
+  eq(react.findAll("tick").length, 4, "[53] 重挂后刻度仍是 4 个");
+  eq(react.findAll("knob").length, 1, "[53] 重挂后旋钮仍只有 1 个");
+  ctx.bundle.flushObservers();
+  await settle();
+  eq(menu.menu.querySelectorAll('[data-ces-part="model-gear"]').length, 1, "[53] 重复扫描也不会再挂一个齿轮");
+
+  /* ── H. 钻取子面板（只有 menuitemradio 行）→ detach 并还原 ── */
+  for (const child of [menu.modelRow, menu.effortRow]) menu.menu.removeChild(child);
+  const radioA = document.createElement("button");
+  radioA.setAttribute("role", "menuitemradio");
+  radioA.textContent = "A";
+  const radioB = document.createElement("button");
+  radioB.setAttribute("role", "menuitemradio");
+  radioB.textContent = "B";
+  menu.menu.appendChild(radioA);
+  menu.menu.appendChild(radioB);
+  ctx.bundle.flushObservers();
+  await settle();
+  eq(menu.menu.querySelector('[data-ces-part="model-gear"]'), null, "[53] 钻取子面板后齿轮被摘掉");
+  eq(cssValue(menu.menu, "minWidth"), "", "[53] 子面板不再被我们加宽（min-width 还原）");
+  eq(cssValue(menu.menu, "paddingRight"), "", "[53] 子面板不再留齿轮槽（padding-right 还原）");
+  eq(cssValue(menu.menu, "boxSizing"), "", "[53] 子面板 box-sizing 还原");
+  eq(menu.effortRow.querySelectorAll('[data-ces-part="host"]').length, 0, "[53] 子面板里不再有滑条容器");
+  eq(react.findAll("track").length, 0, "[53] 子面板里不再渲染滑条");
+
+  /* ── I. 官方原来就有内联值时，退出必须逐字写回（不是一律清空） ── */
+  const custom = await setup({
+    menuInline: { minWidth: "300px", paddingRight: "12px", boxSizing: "content-box" },
+  });
+  eq(cssValue(custom.menu.menu, "minWidth"), expectedMinWidth, "[53] 预置 300px 也会被加宽成新值");
+  eq(cssValue(custom.menu.menu, "paddingRight"), "12px", "[53] 菜单卡预置的 12px 不再被改动");
+  eq(cssValue(custom.menu.menu, "boxSizing"), "border-box", "[53] 预置 content-box 也会改成 border-box");
+  custom.menu.close();
+  custom.bundle.flushObservers();
+  await settle();
+  eq(cssValue(custom.menu.menu, "minWidth"), "300px", "[53] 退出后 min-width 逐字写回 300px");
+  eq(cssValue(custom.menu.menu, "paddingRight"), "12px", "[53] 退出后菜单卡 padding-right 仍是 12px");
+  /* ── J. Model 行原来就有内联 padding-right 时，退出也要逐字写回 ── */
+  const rowCustom = await setup();
+  rowCustom.menu.close();
+  rowCustom.bundle.flushObservers();
+  await settle();
+  rowCustom.menu.modelRow.style.paddingRight = "8px";
+  rowCustom.menu.seat.setAttribute("aria-expanded", "true");
+  rowCustom.document.body.appendChild(rowCustom.menu.menu);
+  rowCustom.bundle.flushObservers();
+  await settle();
+  eq(cssValue(rowCustom.menu.modelRow, "paddingRight"), "36px", "[53] Model 行预置 8px 打开时改成齿轮槽");
+  rowCustom.menu.close();
+  rowCustom.bundle.flushObservers();
+  await settle();
+  eq(cssValue(rowCustom.menu.modelRow, "paddingRight"), "8px", "[53] 退出后 Model 行 padding-right 逐字写回 8px");
+  eq(cssValue(custom.menu.menu, "boxSizing"), "content-box", "[53] 退出后 box-sizing 逐字写回 content-box");
 }
 
 section("54. 同一行只许有一条滑条（前任包/重复加载都不能多画一条）");
@@ -1843,223 +2020,418 @@ section("54. 同一行只许有一条滑条（前任包/重复加载都不能多
   eq(bundle.react.findAll("knob").length, 1, "[54] 只剩一个旋钮");
 }
 
-section("55. 设置入口（齿轮）→ 合并菜单（快速选择 / 动画子菜单），以及落点纯函数");
+section("55. 齿轮打开 body 级居中弹窗（快速选择 / 动画设置），侧栏与落点纯函数已移除");
 {
-  /* ── A. 入口：齿轮是 popover 顶栏里唯一的按钮；右键一律不再打开设置菜单 ── */
+  /* ── A. 新弹窗的常量 / CSS 收纳；旧侧栏与落点纯函数彻底消失 ── */
   const ctx = await setup();
   const I = ctx.internals;
   const { menu, document, react } = ctx;
-  const gap = I.SETTINGS_MENU_GAP_PX;
-  const margin = I.SEAT_BAR_MARGIN_PX;
-  const minHeight = I.SETTINGS_MENU_MIN_HEIGHT_PX;
-  ok(typeof gap === "number" && gap > 0, "[55] __internals.SETTINGS_MENU_GAP_PX 可用（落点断言用它）");
-  ok(typeof margin === "number" && margin > 0, "[55] __internals.SEAT_BAR_MARGIN_PX 可用");
-  ok(typeof minHeight === "number" && minHeight > 0, "[55] __internals.SETTINGS_MENU_MIN_HEIGHT_PX 可用");
+  eq(I.SETTINGS_MODAL_WIDTH_PX, 560, "[55] 弹窗宽度常量 = 560");
+  eq(I.SETTINGS_MODAL_MAX_HEIGHT_PX, 640, "[55] 弹窗最大高度常量 = 640");
+  ok(typeof I.SEAT_BAR_MARGIN_PX === "number" && I.SEAT_BAR_MARGIN_PX > 0,
+    "[55] 档位条的视口边距常量仍在（其它功能没被误删）");
+  ok(I.CSS.indexOf(".mqs-modal{position:fixed;inset:0;z-index:1300") >= 0,
+    "[55] 遮罩层固定铺满视口（fixed inset 0, z-index 1300）");
+  ok(I.CSS.indexOf("display:flex;align-items:center;justify-content:center") >= 0,
+    "[55] 遮罩用 flex 把卡片居中");
+  ok(I.CSS.indexOf("background:rgba(0,0,0,.38)") >= 0, "[55] 遮罩带暗化背景");
+  ok(I.CSS.indexOf("width:min(" + I.SETTINGS_MODAL_WIDTH_PX + "px,100%)") >= 0,
+    "[55] 卡片宽度 = min(560px, 100%)（窄屏不溢出）");
+  ok(I.CSS.indexOf("max-height:min(" + I.SETTINGS_MODAL_MAX_HEIGHT_PX + "px,calc(100vh - 48px))") >= 0,
+    "[55] 卡片最大高度 = min(640px, calc(100vh - 48px))");
+  ok(I.CSS.indexOf("padding:24px") >= 0, "[55] 遮罩留 24px 边距（上下共 48px）");
+  ok(I.CSS.indexOf(".mqs-modal__head{") >= 0, "[55] CSS 有弹窗头部");
+  ok(I.CSS.indexOf(".mqs-modal__body{min-height:0;overflow-y:auto") >= 0,
+    "[55] 弹窗正文区可滚动（内容多时不会把卡片顶出视口）");
+  ok(I.CSS.indexOf(".mqs-panel{") < 0, "[55] 旧的 .mqs-panel 侧栏样式已移除");
+  ok(I.CSS.indexOf(".mqs-panel__title") < 0, "[55] 旧的重复标题样式已移除");
+  ok(I.CSS.indexOf(".mqs-menuhead") < 0, "[55] 旧的 menu-head 入口带样式已移除");
 
+  for (const name of ["validRect", "settingsMenuPlacement", "QUICK_PANEL_WIDTH_PX", "SETTINGS_MENU_GAP_PX", "SETTINGS_MENU_MIN_HEIGHT_PX"]) {
+    eq(I[name], undefined, "[55] __internals." + name + " 已移除");
+  }
+  for (const legacy of ["validRect", "settingsMenuPlacement", "QUICK_PANEL_WIDTH_PX", "SETTINGS_MENU_GAP_PX", "SETTINGS_MENU_MIN_HEIGHT_PX", "quick-panel", "menu-head", "menu-gear", "mqs-panel__title"]) {
+    eq(CODE.indexOf(legacy), -1, "[55] 产物里不再有旧标识 " + legacy);
+  }
+
+  /* ── B. 齿轮入口与右键回归：右键仍然绝不能打开设置 ── */
   const gear = gearOf(ctx);
-  eq(gear.getAttribute("data-ces-part"), "menu-gear", "[55] 顶栏按钮就是设置齿轮");
+  eq(gear.getAttribute("data-ces-part"), "model-gear", "[55] 入口是 Model 行右侧槽里的设置齿轮");
   eq(gear.getAttribute("aria-label"), I.QUICK_TEXT.en["gear.label"], "[55] 齿轮 aria-label 来自插件字典");
   eq(gear.getAttribute("title"), I.QUICK_TEXT.en["gear.label"], "[55] 齿轮 title 同一份字典");
-
-  // 旧右键入口彻底移除：没有 document 级处理器，席和滑条右键都不弹菜单。
   eq(document.documentElement.listeners.has("contextmenu"), false, "[55] 插件没有安装 document 级 contextmenu 处理器");
   eq(menu.seat.listeners.has("contextmenu"), false, "[55] 模型席上没有 contextmenu 处理器");
   menu.seat.dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
   await settle();
-  eq(react.findAll("quick-panel").length, 0, "[55] 右键模型席不再打开设置菜单");
+  eq(react.findAll("settings-modal").length, 0, "[55] 右键模型席不再打开设置弹窗");
+  eq(react.findAll("quick-panel").length, 0, "[55] 右键后也没有旧的侧栏节点");
   const trackNode = react.find("track");
   trackNode.dispatch("contextmenu", { preventDefault() {}, stopPropagation() {} });
   await settle();
-  eq(react.findAll("quick-panel").length, 0, "[55] 右键推理等级滑条不再打开设置菜单");
+  eq(react.findAll("settings-modal").length, 0, "[55] 右键推理等级滑条不再打开设置弹窗");
   document.dispatch("contextmenu", { target: menu.menu });
   await settle();
-  eq(react.findAll("quick-panel").length, 0, "[55] 文档级右键派发也不打开设置菜单");
+  eq(react.findAll("settings-modal").length, 0, "[55] 文档级右键派发也不打开设置弹窗");
   eq(document.documentElement.listeners.has("contextmenu"), false, "[55] 右键之后仍然没有装 contextmenu 处理器");
 
-  /* ── B. 点击齿轮打开唯一一个 body 级菜单，根面板同时包含两项设置 ── */
-  let panel = await openSettings(ctx);
-  ok(panel !== null, "[55] 点击齿轮打开设置菜单");
-  eq(react.findAll("quick-panel").length, 1, "[55] 只打开一个设置菜单");
-  eq(panel.getAttribute("data-pane"), "root", "[55] 打开的是根面板（快速选择）");
-  eq(panel.getAttribute("role"), "dialog", "[55] 菜单是 dialog");
-  eq(panel.getAttribute("aria-label"), I.QUICK_TEXT.en["panel.label"], "[55] 菜单 aria-label 来自字典");
-  eq(document.body.querySelectorAll('[data-ces-part="quick-panel"]').length, 1, "[55] body 下只有这一份设置菜单");
-  ok(document.body.contains(panel), "[55] 菜单挂在 body 级");
-  eq(menu.menu.contains(panel), false, "[55] 菜单不在官方 popover 里");
-  eq(menu.composer.contains(panel), false, "[55] 菜单不在 composer 里");
-  ok(panel.parentNode === document.body || (panel.parentNode && panel.parentNode.parentNode === document.body),
-    "[55] 菜单由 body 级 portal 宿主挂载（不在官方 popover / composer 里）");
+  /* ── C. 点击齿轮：唯一一个 body 级 portal，外层遮罩 + 内层 dialog 卡片 ── */
+  let card = await openSettings(ctx);
+  ok(card !== null, "[55] 点击齿轮打开设置弹窗");
+  let modal = react.find("settings-modal");
+  ok(modal !== null, "[55] 弹窗外层 .mqs-modal 存在");
+  eq(react.findAll("settings-modal").length, 1, "[55] 只打开一个设置弹窗");
+  eq(react.findAll("settings-card").length, 1, "[55] 弹窗里只有一张卡片");
+  eq(react.findAll("quick-panel").length, 0, "[55] 不再有旧的 quick-panel 侧栏");
+  eq(react.findAll("menu-head").length, 0, "[55] 不再有旧的 menu-head 入口带");
+  eq(modal.className, "mqs-modal", "[55] 外层 class = mqs-modal");
+  eq(modal.getAttribute("data-ces-part"), "settings-modal", "[55] 外层带 settings-modal 标识");
+  const host = modal.parentNode;
+  eq(host && host.getAttribute("data-ces-part"), "seatbar-host", "[55] 弹窗在插件自己的 body 级 portal 宿主里");
+  ok(host && host.parentNode === document.body, "[55] portal 宿主直接挂在 document.body");
+  ok(document.body.contains(modal), "[55] 弹窗确实挂在 body 级");
+  eq(document.body.querySelectorAll('[data-ces-part="settings-modal"]').length, 1,
+    "[55] body 下只有这一份设置弹窗");
+  eq(menu.menu.contains(modal), false, "[55] 弹窗不在官方 popover 里");
+  eq(menu.composer.contains(modal), false, "[55] 弹窗不在 composer 里");
 
-  const optionNodes = react.findAll("quick-option");
-  eq(optionNodes.length, 1, "[55] 根面板列出目录里的全部模型（默认目录 1 个）");
-  const optionInput = optionNodes[0].querySelector('[data-ces-part="quick-option-input"]');
-  eq(optionInput.getAttribute("type"), "checkbox", "[55] 全部模型是复选框列表");
-  eq(optionInput.getAttribute("checked"), null, "[55] 未选中的模型复选框是空的");
+  eq(card.getAttribute("data-ces-part"), "settings-card", "[55] 内层带 settings-card 标识");
+  eq(card.className, "mqs-modal__card", "[55] 内层 class = mqs-modal__card");
+  eq(card.getAttribute("data-pane"), "root", "[55] 打开的是根面板（快速选择）");
+  eq(card.getAttribute("role"), "dialog", "[55] 卡片是 dialog");
+  eq(card.getAttribute("aria-modal"), "true", "[55] dialog 声明 aria-modal=true");
+  eq(card.getAttribute("aria-label"), I.QUICK_TEXT.en["panel.label"], "[55] dialog 的 aria-label 来自字典");
+  eq(card.getAttribute("tabIndex"), "-1", "[55] 卡片可编程聚焦（tabIndex=-1）");
+  ok(card.parentNode === modal, "[55] 卡片就在外层遮罩里");
+  ok(modal.contains(card), "[55] 卡片是遮罩的后代");
+  eq(cssValue(card, "left"), "", "[55] 卡片没有内联 left（位置交给 CSS）");
+  eq(cssValue(card, "top"), "", "[55] 卡片没有内联 top");
+  eq(cssValue(card, "maxHeight"), "", "[55] 卡片没有内联 maxHeight");
+  eq(cssValue(card, "height"), "", "[55] 卡片没有固定 height（内容短时不撑成 640）");
+  eq(cssValue(modal, "left"), "", "[55] 遮罩没有内联 left");
+  ok(card.focusCalls >= 1, "[55] 打开后焦点被移进弹窗卡片");
+  ok(card.focusOptions && card.focusOptions.preventScroll === true,
+    "[55] 聚焦卡片时带 preventScroll（打开不拽动页面）");
+
+  const head = card.children[0];
+  eq(head.className, "mqs-modal__head", "[55] 卡片第一段是弹窗头部");
+  const title = react.find("settings-title");
+  ok(title !== null, "[55] 头部有标题");
+  eq(title.className, "mqs-modal__title", "[55] 标题 class = mqs-modal__title");
+  eq(title.textContent, I.QUICK_TEXT.en["panel.title"], "[55] 根面板标题来自字典");
+  const close = react.find("settings-close");
+  ok(close !== null, "[55] 头部有关闭按钮");
+  eq(close.tagName, "BUTTON", "[55] 关闭按钮是 button");
+  eq(close.className, "mqs-modal__close", "[55] 关闭按钮 class = mqs-modal__close");
+  eq(close.getAttribute("aria-label"), I.QUICK_TEXT.en["modal.close"], "[55] 关闭按钮 aria-label 来自字典");
+  eq(close.getAttribute("title"), I.QUICK_TEXT.en["modal.close"], "[55] 关闭按钮 title 同一份字典");
+  const body = card.children[1];
+  eq(body.className, "mqs-modal__body", "[55] 卡片第二段是滚动正文区");
+  eq(react.findAll("settings-title").length, 1, "[55] 整个弹窗只有一个标题节点");
+  eq(body.querySelector('[data-ces-part="settings-title"]'), null, "[55] 正文区没有第二个标题节点");
+  ok(body.textContent.indexOf(I.QUICK_TEXT.en["panel.title"]) < 0,
+    "[55] 正文区没有重复标题（重复标题已删除，标题只在头部）");
+
+  // 根面板内容：提示、动画入口、已选为空、全部模型复选框。
+  ok(body.textContent.indexOf(I.QUICK_TEXT.en["panel.note"]) >= 0, "[55] 根面板有提示文案");
+  ok(react.find("quick-empty") !== null, "[55] 没有已选模型时显示空状态");
   const animEntry = react.find("quick-anim-entry");
-  eq(animEntry.tagName, "BUTTON", "[55] 根面板有进入动画子菜单的按钮");
-  ok(animEntry.textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) >= 0, "[55] 子菜单入口文案来自字典");
+  ok(animEntry !== null, "[55] 根面板有进入动画设置的入口");
+  eq(animEntry.tagName, "BUTTON", "[55] 动画设置入口是按钮");
+  ok(animEntry.parentNode === body, "[55] 动画设置入口就在正文区");
+  ok(animEntry.textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) >= 0, "[55] 动画设置入口文案来自字典");
+  eq(react.find("quick-options") !== null, true, "[55] 根面板有全部模型区");
+  const rootOptions = react.findAll("quick-option");
+  eq(rootOptions.length, 1, "[55] 根面板列出目录里的全部模型（默认目录 1 个）");
+  const rootInput = rootOptions[0].querySelector('[data-ces-part="quick-option-input"]');
+  eq(rootInput.getAttribute("type"), "checkbox", "[55] 全部模型是复选框列表");
+  eq(rootInput.getAttribute("checked"), null, "[55] 未选中的模型复选框是空的");
 
-  /* ── C. 动画子菜单：schema 驱动的 anim-field / anim-option，可写回、可返回、可重置 ── */
-  animEntry.fire("onClick", {});
+  /* ── D. 注入 configForms：chip / 移除按钮 / 复选框增删都调用 save；拖动排序仍可用 ── */
+  const form = createQuickForm([
+    { provider: "deepseek", model: "deepseek-v41-flash" },
+    { provider: "deepseek", model: "ghost" },
+  ]);
+  const listed = await setup({ configForms: { get: () => form } });
+  let listedCard = await openSettings(listed);
+  ok(listedCard !== null, "[55] 注入 configForms 后齿轮仍然打开弹窗");
+  eq(listed.react.find("quick-chosen") !== null, true, "[55] 有已选模型时显示已选列表");
+  let chips = listed.react.findAll("quick-chip");
+  eq(chips.length, 2, "[55] 已选模型显示为两个 chip");
+  eq(chips.map((node) => node.getAttribute("data-model")).join(","), "deepseek-v41-flash,ghost",
+    "[55] chip 顺序 = 已选列表顺序");
+  eq(chips[0].getAttribute("title"), I.QUICK_TEXT.en["chip.drag"], "[55] chip 的 title 来自字典");
+  eq(listed.react.findAll("quick-chip-remove").length, 2, "[55] 每个 chip 都有移除按钮");
+  eq(listed.react.find("quick-chip-remove").getAttribute("aria-label"), "Remove DeepSeek-V41-Flash",
+    "[55] 移除按钮 aria-label 来自字典（名称已填充）");
+  const flashOptionInput = listed.react.findAll("quick-option")
+    .find((node) => node.getAttribute("data-model") === "deepseek-v41-flash")
+    .querySelector('[data-ces-part="quick-option-input"]');
+  eq(flashOptionInput.getAttribute("checked"), "", "[55] 已在已选列表里的模型复选框是勾选的");
+
+  flashOptionInput.fire("onChange", {});
   await settle();
-  panel = react.find("quick-panel");
-  eq(panel.getAttribute("data-pane"), "anim", "[55] 进入动画子菜单");
-  eq(react.findAll("quick-option").length, 0, "[55] 子菜单里不再显示快速选择根面板");
+  eq(JSON.stringify(form.sets.at(-1)), JSON.stringify(["quickModels", [{ provider: "deepseek", model: "ghost" }]]),
+    "[55] 取消勾选调用 save（从列表移除）");
+  const flashInputAgain = listed.react.findAll("quick-option")
+    .find((node) => node.getAttribute("data-model") === "deepseek-v41-flash")
+    .querySelector('[data-ces-part="quick-option-input"]');
+  flashInputAgain.fire("onChange", {});
+  await settle();
+  eq(JSON.stringify(form.sets.at(-1)), JSON.stringify(["quickModels", [
+    { provider: "deepseek", model: "ghost" },
+    { provider: "deepseek", model: "deepseek-v41-flash" },
+  ]]), "[55] 重新勾选调用 save（追加到列表末尾）");
+  eq(listed.react.findAll("quick-chip").map((node) => node.getAttribute("data-model")).join(","),
+    "ghost,deepseek-v41-flash", "[55] 弹窗按保存结果重排 chip");
 
-  const fields = react.findAll("anim-field");
+  // 拖动排序（与旧侧栏相同的指针模拟：按下 → 移动一行 → 松手保存）。
+  let dragChip = listed.react.findAll("quick-chip")[0];
+  dragChip.fire("onPointerDown", { button: 0, clientY: 100, pointerId: 3 });
+  await settle();
+  dragChip = listed.react.findAll("quick-chip").find((node) => node.getAttribute("data-dragging") === "1");
+  ok(dragChip !== undefined, "[55] 按下的 chip 进入拖动态");
+  dragChip.fire("onPointerMove", { clientY: 100 + I.QUICK_ROW_PX });
+  await settle();
+  eq(listed.react.findAll("quick-chip").map((node) => node.getAttribute("data-model")).join(","),
+    "deepseek-v41-flash,ghost", "[55] 拖动时实时预览新顺序");
+  dragChip = listed.react.findAll("quick-chip").find((node) => node.getAttribute("data-dragging") === "1");
+  dragChip.fire("onPointerUp", { type: "pointerup", clientY: 100 + I.QUICK_ROW_PX });
+  await settle();
+  eq(JSON.stringify(form.sets.at(-1)), JSON.stringify(["quickModels", [
+    { provider: "deepseek", model: "deepseek-v41-flash" },
+    { provider: "deepseek", model: "ghost" },
+  ]]), "[55] 松手后拖动排序结果写回 save");
+
+  const removeFirst = listed.react.findAll("quick-chip-remove")[0];
+  removeFirst.fire("onClick", {});
+  await settle();
+  eq(JSON.stringify(form.sets.at(-1)), JSON.stringify(["quickModels", [{ provider: "deepseek", model: "ghost" }]]),
+    "[55] 点 chip 的移除按钮调用 save");
+
+  /* ── E. 动画子页：返回 / radiogroup / 重置；子页也有弹窗头部标题 ── */
+  const entry = listed.react.find("quick-anim-entry");
+  entry.fire("onClick", {});
+  await settle();
+  listedCard = listed.react.find("settings-card");
+  eq(listedCard.getAttribute("data-pane"), "anim", "[55] 进入动画子页");
+  eq(listed.react.findAll("quick-option").length, 0, "[55] 子页里不再显示快速选择根面板");
+  eq(listed.react.findAll("quick-chip").length, 0, "[55] 子页里不再显示已选 chip");
+  eq(listed.react.findAll("quick-anim-entry").length, 0, "[55] 子页里不再显示动画入口");
+  eq(listed.react.find("settings-title").textContent, I.QUICK_TEXT.en["panel.animation"],
+    "[55] 子页头部标题 = 动画设置");
+  const animBody = listedCard.children[1];
+  eq(animBody.className, "mqs-modal__body", "[55] 子页正文区仍是 mqs-modal__body");
+  ok(animBody.textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) < 0,
+    "[55] 动画子页正文区没有重复标题");
+  const back = listed.react.find("anim-back");
+  ok(back !== null, "[55] 子页有返回按钮");
+  eq(back.tagName, "BUTTON", "[55] 返回按钮是 button");
+  ok(listed.react.find("anim-reset") !== null, "[55] 子页有恢复默认按钮");
+
+  const fields = listed.react.findAll("anim-field");
   eq(fields.length, I.SETTINGS_SCHEMA.length, "[55] 每个 SETTINGS_SCHEMA 条目一个 anim-field");
-  eq(fields.map((field) => field.getAttribute("data-key")).join(","), I.SETTINGS_SCHEMA.map((item) => item.key).join(","),
+  eq(fields.map((field) => field.getAttribute("data-key")).join(","),
+    I.SETTINGS_SCHEMA.map((item) => item.key).join(","),
     "[55] anim-field 的 data-key 与 schema 顺序一致");
   for (const schemaItem of I.SETTINGS_SCHEMA) {
-    const field = animFieldOf(ctx, schemaItem.key);
-    ok(field !== null, `[55] ${schemaItem.key} 有 anim-field`);
+    const field = animFieldOf(listed, schemaItem.key);
+    ok(field !== null, "[55] " + schemaItem.key + " 有 anim-field");
     if (field === null) continue;
+    eq(field.getAttribute("role"), "radiogroup", "[55] " + schemaItem.key + " 是 radiogroup");
+    eq(field.getAttribute("aria-label"), I.QUICK_TEXT.en[schemaItem.labelKey],
+      "[55] " + schemaItem.key + " 分组 aria-label 来自字典");
     const radios = field.querySelectorAll('[data-ces-part="anim-option"]');
-    eq(radios.length, schemaItem.options.length, `[55] ${schemaItem.key} 的选项数 = schema`);
-    eq(radios.map((radio) => radio.getAttribute("type")).join(","), schemaItem.options.map(() => "radio").join(","),
-      `[55] ${schemaItem.key} 的控件都是 radio`);
-    eq(radios.map((radio) => radio.getAttribute("value")).join(","), schemaItem.options.map((option) => option.value).join(","),
-      `[55] ${schemaItem.key} 的取值与 schema 一致`);
-    eq(checkedRadioValues(field).join(","), String(I.readSettings()[schemaItem.key]),
-      `[55] ${schemaItem.key} 回填当前设置`);
+    eq(radios.length, schemaItem.options.length, "[55] " + schemaItem.key + " 的选项数 = schema");
+    eq(radios.map((radio) => radio.getAttribute("type")).join(","),
+      schemaItem.options.map(() => "radio").join(","), "[55] " + schemaItem.key + " 的控件都是 radio");
+    eq(radios.map((radio) => radio.getAttribute("value")).join(","),
+      schemaItem.options.map((option) => option.value).join(","),
+      "[55] " + schemaItem.key + " 的取值与 schema 一致");
+    eq(checkedRadioValues(field).join(","), String(listed.internals.readSettings()[schemaItem.key]),
+      "[55] " + schemaItem.key + " 回填当前设置");
   }
 
-  const motionField = animFieldOf(ctx, "motion");
-  const quickRadio = motionField.querySelectorAll('[data-ces-part="anim-option"]').find((radio) => radio.getAttribute("value") === "quick");
-  quickRadio.fire("onChange", {});
+  back.fire("onClick", {});
   await settle();
-  eq(I.readSettings().motion, "quick", "[55] 改动画单选项写进插件设置存储");
-  eq(checkedRadioValues(animFieldOf(ctx, "motion")).join(","), "quick", "[55] 菜单按新值重新回填（动画）");
+  listedCard = listed.react.find("settings-card");
+  eq(listedCard.getAttribute("data-pane"), "root", "[55] 返回按钮回到快速选择根面板");
+  eq(listed.react.findAll("anim-field").length, 0, "[55] 返回后动画控件全部消失");
+  ok(listed.react.find("quick-anim-entry") !== null, "[55] 根面板的动画入口还在");
+  eq(listed.react.findAll("quick-option").length, 1, "[55] 根面板的模型列表还在");
 
-  const ticksField = animFieldOf(ctx, "reachedTicks");
-  const highlightRadio = ticksField.querySelectorAll('[data-ces-part="anim-option"]').find((radio) => radio.getAttribute("value") === "highlight");
-  highlightRadio.fire("onChange", {});
+  /* ── F. 关闭的三条路径（× / 遮罩 / Esc）与焦点、面板状态复位 ── */
+  listed.react.find("settings-close").fire("onClick", {});
   await settle();
-  eq(I.readSettings().reachedTicks, "highlight", "[55] 改刻度点单选项写进插件设置存储");
-  eq(checkedRadioValues(animFieldOf(ctx, "reachedTicks")).join(","), "highlight", "[55] 菜单按新值重新回填（刻度点）");
-  eq(I.SETTINGS_KEY, "dsh-model-quick-selector.settings", "[55] 存储键仍然是原来的键");
+  eq(listed.react.findAll("settings-modal").length, 0, "[55] 点关闭按钮关闭弹窗");
+  eq(listed.react.findAll("settings-card").length, 0, "[55] 关闭后卡片也从 DOM 移除");
 
-  react.find("anim-reset").fire("onClick", {});
+  listedCard = await openSettings(listed);
+  ok(listedCard !== null, "[55] 关闭后可以再次打开");
+  eq(listedCard.getAttribute("data-pane"), "root", "[55] 再次打开总是先回到根面板");
+  ok(listedCard.focusCalls >= 1, "[55] 再次打开仍把焦点移进卡片");
+  modal = listed.react.find("settings-modal");
+  card = listed.react.find("settings-card");
+  modal.fire("onMouseDown", { target: card, currentTarget: modal });
   await settle();
-  const defaults = I.schemaDefaults();
-  const afterReset = I.readSettings();
-  eq(afterReset.motion, defaults.motion, "[55] 恢复默认：动画回到 schema 默认");
-  eq(afterReset.reachedTicks, defaults.reachedTicks, "[55] 恢复默认：刻度点回到 schema 默认");
-  eq(afterReset.v, I.SETTINGS_VERSION, "[55] 恢复默认后仍带当前设置版本");
-  eq(checkedRadioValues(animFieldOf(ctx, "motion")).join(","), "full", "[55] 恢复默认后动画单选项回填 full");
-  eq(checkedRadioValues(animFieldOf(ctx, "reachedTicks")).join(","), "hidden", "[55] 恢复默认后刻度点单选项回填 hidden");
-
-  react.find("anim-back").fire("onClick", {});
+  eq(listed.react.findAll("settings-modal").length, 1, "[55] 点在卡片内部（target≠currentTarget）不关闭");
+  modal = listed.react.find("settings-modal");
+  modal.fire("onMouseDown", {});
   await settle();
-  panel = react.find("quick-panel");
-  eq(panel.getAttribute("data-pane"), "root", "[55] 返回按钮回到了快速选择根面板");
-  eq(react.findAll("anim-field").length, 0, "[55] 返回后动画控件全部消失");
-  ok(react.find("quick-anim-entry") !== null, "[55] 根面板的动画入口还在");
-  eq(react.findAll("quick-option").length, 1, "[55] 根面板的模型列表还在");
+  eq(listed.react.findAll("settings-modal").length, 0, "[55] 点在遮罩本身关闭弹窗");
 
-  /* ── D. 根面板里既有已选列表（chip），也有动画入口 ── */
-  const form = createQuickForm([{ provider: "deepseek", model: "deepseek-v41-flash" }]);
-  const listed = await setup({ configForms: { get: () => form } });
-  const listedPanel = await openSettings(listed);
-  ok(listedPanel !== null, "[55] 注入 configForms 后齿轮仍然打开菜单");
-  const listedOption = listed.react.findAll("quick-option").find((node) => node.getAttribute("data-model") === "deepseek-v41-flash");
-  eq(listedOption.querySelector('[data-ces-part="quick-option-input"]').getAttribute("checked"), "",
-    "[55] 已在已选列表里的模型复选框是勾选的");
-  const chips = listed.react.findAll("quick-chip");
-  eq(chips.length, 1, "[55] 已选模型显示为一个 chip");
-  eq(chips[0].getAttribute("data-model"), "deepseek-v41-flash", "[55] chip 带模型 id");
-  ok(chips[0].textContent.indexOf("DeepSeek-V41-Flash") >= 0, "[55] chip 显示模型名");
-  eq(chips[0].getAttribute("title"), listed.internals.QUICK_TEXT.en["chip.drag"], "[55] chip 的 title 来自字典");
-  eq(listed.react.find("quick-chip-remove").getAttribute("aria-label"), "Remove DeepSeek-V41-Flash",
-    "[55] chip 的移除按钮 aria-label 来自字典");
-  ok(listed.react.find("quick-anim-entry") !== null, "[55] 同一根面板里同时有已选列表和动画入口");
-
-  /* ── E. 落点纯函数：右/左、顶端夹取、最大高度、退化 anchor、小视口边界（BVA） ── */
-  const placement = I.settingsMenuPlacement;
-  const viewport = { width: 1280, height: 800 };
-  const panelWidth = I.QUICK_PANEL_WIDTH_PX;
-  const anchor = { left: 100, top: 100, right: 260, bottom: 400, width: 160, height: 300 };
-  const normal = placement(anchor, viewport, panelWidth);
-  ok(normal !== null, "[55] 正常 popover 得到落点");
-  eq(Object.keys(normal).sort().join(","), "left,maxHeight,top", "[55] 落点形状是 { left, top, maxHeight }");
-  eq(normal.left, anchor.right + gap, "[55] 右侧放得下 → 菜单左缘 = popover 右缘 + gap");
-  eq(normal.top, anchor.top, "[55] top 与 popover 顶端对齐");
-  eq(normal.maxHeight, viewport.height - normal.top - margin, "[55] maxHeight = 顶端到底部边距剩余的空间");
-
-  // 恰好放得下 / 差 1px：边界就在「视口宽 - 边距 - 菜单宽 - gap」。
-  const exactRight = viewport.width - margin - panelWidth - gap;
-  const exact = placement({ left: 500, top: 100, right: exactRight, bottom: 400 }, viewport, panelWidth);
-  eq(exact.left, exactRight + gap, "[55] 恰好放得下（贴右边距）→ 仍放右侧");
-  const oneShort = placement({ left: 500, top: 100, right: exactRight + 1, bottom: 400 }, viewport, panelWidth);
-  eq(oneShort.left, 500 - gap - panelWidth, "[55] 差 1px → 翻到 popover 左侧");
-  eq(oneShort.left + panelWidth, 500 - gap, "[55] 左侧落点同样保持 gap");
-
-  // 视口左上角：不出屏，同时仍贴 popover 右侧。
-  const topLeft = placement({ left: 0, top: 0, right: 200, bottom: 30 }, viewport, panelWidth);
-  ok(topLeft !== null, "[55] 视口左上角也得到落点");
-  eq(topLeft.left, 200 + gap, "[55] 左上角：菜单仍贴 popover 右侧");
-  eq(topLeft.top, margin, "[55] 左上角：top 被夹到视口边距内");
-  eq(topLeft.maxHeight, viewport.height - topLeft.top - margin, "[55] 左上角：maxHeight 仍按剩余空间算");
-
-  // 视口右下角：翻到左侧，并把顶端压到还能留出最小可用高度。
-  const bottomRight = placement({ left: 1080, top: 770, right: 1280, bottom: 800 }, viewport, panelWidth);
-  ok(bottomRight !== null, "[55] 视口右下角也得到落点");
-  eq(bottomRight.left, 1080 - gap - panelWidth, "[55] 右下角：右侧放不下 → 翻到 popover 左侧");
-  eq(bottomRight.top, viewport.height - minHeight - margin, "[55] 右下角：top 下压到仍留得出最小高度");
-  eq(bottomRight.maxHeight, viewport.height - bottomRight.top - margin, "[55] 右下角：maxHeight 正好是剩余空间");
-  eq(bottomRight.maxHeight, minHeight, "[55] 右下角：剩余的正好是最小可用高度");
-  ok(bottomRight.top + bottomRight.maxHeight <= viewport.height, "[55] 右下角落点不出视口");
-
-  // 退化 anchor：必须 null，而不是被夹到 (margin, margin)。
-  eq(placement({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }, viewport, panelWidth), null,
-    "[55] 全 0 anchor → null（不会钉在左上角）");
-  eq(placement({ left: NaN, top: 0, right: 200, bottom: 30 }, viewport, panelWidth), null,
-    "[55] NaN left → null");
-  eq(placement({ left: 0, top: NaN, right: 200, bottom: 30 }, viewport, panelWidth), null,
-    "[55] NaN top → null");
-  eq(placement({ left: 0, top: 0, right: NaN, bottom: 30 }, viewport, panelWidth), null,
-    "[55] NaN right → null");
-  eq(placement({ left: 0, top: 0, right: 200, bottom: NaN }, viewport, panelWidth), null,
-    "[55] NaN bottom → null");
-  eq(placement({ left: 100, top: 100, right: 100, bottom: 100 }, viewport, panelWidth), null,
-    "[55] 零面积 anchor → null");
-  eq(placement(anchor, viewport, 0), null, "[55] 菜单宽为 0 → null");
-
-  // 小视口：320×240 仍放得下 160px 的最小高度；边界是「顶端 + 底边距 + 最小高度」。
-  const tiny = placement({ left: 10, top: 10, right: 200, bottom: 30 }, { width: 320, height: 240 }, panelWidth);
-  ok(tiny !== null, "[55] 320×240 小视口仍能放下最小高度");
-  eq(tiny.top, 10, "[55] 小视口：顶端仍与 popover 对齐");
-  eq(tiny.maxHeight, 240 - tiny.top - margin, "[55] 小视口：maxHeight = 剩余空间（不被最小高度顶出视口）");
-  ok(tiny.top + tiny.maxHeight <= 240, "[55] 小视口：菜单不出视口");
-
-  const boundaryTop = margin;
-  const boundaryHeight = boundaryTop + margin + minHeight;
-  const fitsTiny = placement({ left: 10, top: 0, right: 200, bottom: 30 }, { width: 320, height: boundaryHeight }, panelWidth);
-  ok(fitsTiny !== null, "[55] 剩余空间恰好 = 最小高度 → 仍返回落点");
-  eq(fitsTiny.maxHeight, minHeight, "[55] 边界上 maxHeight = 最小高度");
-  eq(placement({ left: 10, top: 0, right: 200, bottom: 30 }, { width: 320, height: boundaryHeight - 1 }, panelWidth), null,
-    "[55] 剩余空间比最小高度少 1px → null");
-
-  /* ── F. 打开菜单时真的采用落点；无效锚点 + 无指针坐标时宁可不弹 ── */
-  const placed = await setup();
-  placed.menu.menu.rect = { left: 320, top: 120, right: 520, bottom: 420, width: 200, height: 300 };
-  const expected = placed.internals.settingsMenuPlacement(
-    placed.menu.menu.rect,
-    { width: 1280, height: 800 },
-    placed.internals.QUICK_PANEL_WIDTH_PX,
-  );
-  const placedPanel = await openSettings(placed);
-  ok(placedPanel !== null, "[55] 有面积的 popover 能打开菜单");
-  eq(placedPanel.style.left, expected.left + "px", "[55] 实际 left = 纯函数算出的 left");
-  eq(placedPanel.style.top, expected.top + "px", "[55] 实际 top = 纯函数算出的 top");
-  eq(placedPanel.style.maxHeight, expected.maxHeight + "px", "[55] 实际 maxHeight = 纯函数算出的 maxHeight");
-  ok(parseFloat(placedPanel.style.left) > placed.menu.menu.rect.right, "[55] 菜单实际出现在 popover 右侧");
-
-  const stale = await setup();
-  stale.menu.menu.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  gearOf(stale).dispatch("click", { detail: 0 }); // 键盘触发：没有指针坐标可以兜底
+  await openSettings(listed);
+  listed.document.dispatch("keydown", { key: "Escape" });
   await settle();
-  eq(stale.react.findAll("quick-panel").length, 0, "[55] 无效锚点且无指针坐标 → 宁可不弹，也不出现在左上角");
+  eq(listed.react.findAll("settings-modal").length, 0, "[55] 按 Esc 关闭弹窗");
+  listed.document.dispatch("keydown", { key: "Escape" });
+  await settle();
+  eq(listed.react.findAll("settings-modal").length, 0, "[55] 已关闭时再按 Esc 无副作用");
+
+  /* ── G. 动画设置经 localStorage 持久化；重新加载也从同一把键恢复；重置写回默认 ── */
+  const memory = (() => {
+    const map = new Map();
+    return {
+      map,
+      getItem: (key) => (map.has(key) ? map.get(key) : null),
+      setItem: (key, value) => { map.set(key, String(value)); },
+      removeItem: (key) => { map.delete(key); },
+    };
+  })();
+  globalThis.localStorage = memory;
+  try {
+    const persisted = await setup();
+    let persistedCard = await openSettings(persisted);
+    ok(persistedCard !== null, "[55] 持久化场景：齿轮打开弹窗");
+    persisted.react.find("quick-anim-entry").fire("onClick", {});
+    await settle();
+    const persistedMotion = animFieldOf(persisted, "motion");
+    const persistedQuick = persistedMotion.querySelectorAll('[data-ces-part="anim-option"]')
+      .find((radio) => radio.getAttribute("value") === "quick");
+    persistedQuick.fire("onChange", {});
+    await settle();
+    const persistedTicks = animFieldOf(persisted, "reachedTicks");
+    const persistedHighlight = persistedTicks.querySelectorAll('[data-ces-part="anim-option"]')
+      .find((radio) => radio.getAttribute("value") === "highlight");
+    persistedHighlight.fire("onChange", {});
+    await settle();
+    const raw = memory.getItem(persisted.internals.SETTINGS_KEY);
+    ok(typeof raw === "string" && raw.length > 0, "[55] 改动后写入了 localStorage");
+    const parsed = JSON.parse(raw);
+    eq(parsed.motion, "quick", "[55] localStorage 保存动画 = quick");
+    eq(parsed.reachedTicks, "highlight", "[55] localStorage 保存刻度点 = highlight");
+    eq(parsed.v, persisted.internals.SETTINGS_VERSION, "[55] localStorage 带当前设置版本");
+    eq(checkedRadioValues(animFieldOf(persisted, "motion")).join(","), "quick",
+      "[55] 弹窗按保存后的动画值重新回填");
+
+    persisted.react.find("settings-close").fire("onClick", {});
+    await settle();
+    await openSettings(persisted);
+    persisted.react.find("quick-anim-entry").fire("onClick", {});
+    await settle();
+    eq(checkedRadioValues(animFieldOf(persisted, "motion")).join(","), "quick",
+      "[55] 关闭再打开仍按 localStorage 里的动画值回填");
+
+    const reloaded = await setup();
+    await openSettings(reloaded);
+    reloaded.react.find("quick-anim-entry").fire("onClick", {});
+    await settle();
+    eq(checkedRadioValues(animFieldOf(reloaded, "motion")).join(","), "quick",
+      "[55] 新加载的插件从 localStorage 恢复动画设置");
+    eq(checkedRadioValues(animFieldOf(reloaded, "reachedTicks")).join(","), "highlight",
+      "[55] 新加载的插件从 localStorage 恢复刻度点设置");
+
+    reloaded.react.find("anim-reset").fire("onClick", {});
+    await settle();
+    const defaults = reloaded.internals.schemaDefaults();
+    const resetRaw = JSON.parse(memory.getItem(reloaded.internals.SETTINGS_KEY));
+    eq(resetRaw.motion, defaults.motion, "[55] 恢复默认把 schema 默认动画写回 localStorage");
+    eq(resetRaw.reachedTicks, defaults.reachedTicks, "[55] 恢复默认把 schema 默认刻度点写回 localStorage");
+    eq(resetRaw.v, reloaded.internals.SETTINGS_VERSION, "[55] 恢复默认后仍带当前设置版本");
+    eq(checkedRadioValues(animFieldOf(reloaded, "motion")).join(","), "full",
+      "[55] 恢复默认后动画单选项回填 full");
+    eq(checkedRadioValues(animFieldOf(reloaded, "reachedTicks")).join(","), "hidden",
+      "[55] 恢复默认后刻度点单选项回填 hidden");
+  } finally {
+    delete globalThis.localStorage;
+  }
+
+  /* ── H. 多语言：标题 / 关闭按钮 / 动画入口跟着 DSH 语言走（zh → en → 无 locale 回退） ── */
+  const zhLocale = createFakeLocale("zh");
+  const zh = await setup({
+    host: { locale: zhLocale },
+    props: { t: zhLocale.bind(I.QUICK_NS) },
+  });
+  let zhCard = await openSettings(zh);
+  ok(zhCard !== null, "[55] 中文环境：齿轮打开弹窗");
+  eq(gearOf(zh).getAttribute("aria-label"), I.QUICK_TEXT.zh["gear.label"], "[55] 中文环境：齿轮 aria-label 是中文");
+  eq(zhCard.getAttribute("aria-label"), I.QUICK_TEXT.zh["panel.label"], "[55] 中文环境：dialog aria-label 是中文");
+  eq(zh.react.find("settings-title").textContent, I.QUICK_TEXT.zh["panel.title"], "[55] 中文环境：标题是中文");
+  eq(zh.react.find("settings-close").getAttribute("aria-label"), I.QUICK_TEXT.zh["modal.close"],
+    "[55] 中文环境：关闭按钮 aria-label 是中文");
+  eq(zh.react.find("settings-close").getAttribute("title"), I.QUICK_TEXT.zh["modal.close"],
+    "[55] 中文环境：关闭按钮 title 是中文");
+  ok(zh.react.find("quick-anim-entry").textContent.indexOf(I.QUICK_TEXT.zh["panel.animation"]) >= 0,
+    "[55] 中文环境：动画入口文案是中文");
+
+  zhLocale.setLocale("en");
+  zh.react.find("settings-close").fire("onClick", {});
+  await settle();
+  zh.bundle.flushObservers();
+  await settle();
+  eq(gearOf(zh).getAttribute("aria-label"), I.QUICK_TEXT.en["gear.label"],
+    "[55] 切到英文：齿轮 aria-label 跟着变");
+  zhCard = await openSettings(zh);
+  eq(zhCard.getAttribute("data-pane"), "root", "[55] 切到英文后重新打开仍是根面板");
+  eq(zhCard.getAttribute("aria-label"), I.QUICK_TEXT.en["panel.label"],
+    "[55] 切到英文：dialog aria-label 跟着变");
+  eq(zh.react.find("settings-title").textContent, I.QUICK_TEXT.en["panel.title"],
+    "[55] 切到英文：标题跟着变");
+  eq(zh.react.find("settings-close").getAttribute("aria-label"), I.QUICK_TEXT.en["modal.close"],
+    "[55] 切到英文：关闭按钮 aria-label 跟着变");
+  eq(zh.react.find("settings-close").getAttribute("title"), I.QUICK_TEXT.en["modal.close"],
+    "[55] 切到英文：关闭按钮 title 跟着变");
+  ok(zh.react.find("quick-anim-entry").textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) >= 0,
+    "[55] 切到英文：动画入口文案跟着变");
+  ok(!/[一-鿿]/.test(allStrings(zhCard)),
+    "[55] 英文弹窗里没有任何中文漏网（文本 + 属性）");
+
+  const bare = await setup();
+  const bareCard = await openSettings(bare);
+  ok(bareCard !== null, "[55] 无 locale 服务时也能打开弹窗");
+  eq(bareCard.getAttribute("aria-label"), I.QUICK_TEXT.en["panel.label"],
+    "[55] 无 locale：dialog aria-label 回退英文");
+  eq(bare.react.find("settings-title").textContent, I.QUICK_TEXT.en["panel.title"],
+    "[55] 无 locale：标题回退英文");
+  eq(bare.react.find("settings-close").getAttribute("aria-label"), I.QUICK_TEXT.en["modal.close"],
+    "[55] 无 locale：关闭按钮回退英文");
+  ok(bare.react.find("quick-anim-entry").textContent.indexOf(I.QUICK_TEXT.en["panel.animation"]) >= 0,
+    "[55] 无 locale：动画入口回退英文");
+  ok(!/[一-鿿]/.test(allStrings(bareCard)), "[55] 回退英文弹窗里没有硬编码中文");
+
+  /* ── I. 与官方 popover 几何解耦：不读锚点/指针，NaN / 全 0 矩形都照样打开 ── */
+  const free = await setup();
+  let geometryReads = 0;
+  const badRect = () => {
+    geometryReads += 1;
+    return { left: NaN, top: NaN, right: NaN, bottom: NaN, width: NaN, height: NaN };
+  };
+  free.menu.menu.getBoundingClientRect = badRect;
+  free.menu.seat.getBoundingClientRect = badRect;
+  const freeCard = await openSettings(free);
+  ok(freeCard !== null, "[55] 官方 popover 几何为 NaN 时齿轮仍能打开弹窗");
+  eq(geometryReads, 0, "[55] 打开弹窗完全不读取官方 popover / 模型席的几何");
+  eq(cssValue(freeCard, "left"), "", "[55] 几何无效时卡片仍不写内联 left");
+  eq(cssValue(freeCard, "top"), "", "[55] 几何无效时卡片仍不写内联 top");
+  eq(cssValue(freeCard, "maxHeight"), "", "[55] 几何无效时卡片仍不写内联 maxHeight");
+  ok(free.react.find("settings-modal").contains(freeCard), "[55] 弹窗仍然居中挂在自己的宿主里");
+
+  const zero = await setup();
+  zero.menu.menu.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  zero.menu.seat.rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  const zeroCard = await openSettings(zero);
+  ok(zeroCard !== null, "[55] 全 0 几何（面板已被卸载的形态）也能打开弹窗");
+  eq(zeroCard.getAttribute("data-pane"), "root", "[55] 全 0 几何打开的是根面板");
+  eq(zero.react.findAll("settings-modal").length, 1, "[55] 全 0 几何只打开一个弹窗");
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
